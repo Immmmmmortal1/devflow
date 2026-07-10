@@ -142,6 +142,38 @@ The reviewer output must be handed back to the main agent, not treated as the fi
 - Re-run code review when fixes materially change behavior or touch new files
 - If a finding is not fixed, document why before asking for commit approval
 
+#### Review loop gate
+
+`dev-flow` review is a gated loop, not a one-shot check.
+
+- Start counting at the **first post-edit review**. This is `review_round = 1`.
+- One round is: `run review` → `main agent classifies findings` → `fixes within scope` → `targeted validation`.
+- After any material fix set, the main agent must run the **next review round** before commit-gate.
+- For each round, the main agent must explicitly record:
+  - `Round:` `1|2|3`
+  - `Review result:` pass / revise
+  - `Finding decisions:` `fix`, `accept risk`, `not applicable`
+  - `Validation rerun:` commands/checks and outcome
+- The loop continues until either:
+  - review reaches a state that satisfies the interaction / behavior logic for the confirmed scope, or
+  - the user explicitly accepts the remaining risk.
+
+#### Three-round stop gate
+
+If **3 consecutive review rounds** have completed after source edits and the work still does **not** meet the required interaction / behavior standard:
+
+- **Do not continue silently**
+- **Do not enter commit-gate**
+- Mark the task as **blocked waiting for human confirmation**
+- Hand back a compact blocker packet containing:
+  - `Rounds completed: 3`
+  - `Still-open findings`
+  - `What was fixed already`
+  - `What remains uncertain`
+  - `Recommended options for human decision`
+
+The main agent may resume only after explicit user confirmation on how to proceed.
+
 Do not enter `commit-gate` until the code review handoff has been addressed, or the user explicitly accepts the remaining risk.
 
 ### Step 6 — After implementation gates
@@ -173,7 +205,11 @@ dev-flow
   → zentao-bug-gate? (if ZenTao required)
   → confirm-gate → [user proceed]
   → implement
-  → code_review → main-agent self-check → fixes / risk acceptance
+  → code_review round 1
+  → main-agent self-check → fixes / validation
+  → code_review round 2? → fixes / validation
+  → code_review round 3?
+  → [pass] or [blocked for human confirmation]
   → bugkb? (feature) / parity report? (reference) / zentao resolve? (bug)
   → commit-gate → [user proceed] → git-commit-convention
 ```
@@ -191,6 +227,8 @@ dev-flow
 7. Prompt-only discipline is insufficient for contract parity — run golden validation (unit test or script in the target repo) when `reference-parity` is active.
 8. Review context must be explicit: never ask a reviewer to infer scope from chat history alone.
 9. Review findings are inputs to the main agent's self-check loop; the main agent remains responsible for deciding, fixing, validating, and explaining residual risk.
+10. Post-edit review is a **three-round gated loop**. After 3 review rounds without reaching the required interaction / behavior standard, stop and wait for human confirmation.
+11. `commit-gate` is forbidden while the three-round review loop is unresolved.
 
 ---
 
