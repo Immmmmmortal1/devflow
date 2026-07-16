@@ -1,13 +1,31 @@
 ---
 name: dev-flow
-description: Orchestrator for small feature work and bug fixes. Trigger only on explicit user intent (/dev-flow, 先方案, 修 bug, 先排查). Loads atomic skills in order; do not embed their full rules here. Always read code-grounded first; branch to feature-workflow or bug-workflow; activate reference-parity and zentao-bug-gate only when evidence requires; confirm-gate before edits; code review after implementation with context handoff back to the main agent for self-check; commit-gate after review is addressed.
+description: Use when the user explicitly requests dev-flow for a small feature, bug fix, plan-first investigation, or automated mobile development task.
 ---
 
-# Dev Flow (Orchestrator)
+# Dev Flow (Automated Development Loop)
 
 ## Purpose
 
-Orchestrate **small feature** and **bug fix** work. This file defines **order and triggers only**. Detailed rules live in atomic skills — **read them at each step**.
+`dev-flow` is an **automated development loop** for small features and bug fixes. Its default outcome is a completed, runtime-verified change rather than a handoff immediately after code is written.
+
+After required human approvals, it should autonomously implement, build, run on the attached device, operate the real UI, read runtime logs, fix issues, and rerun validation until the development loop is closed.
+
+This file defines orchestration order and completion boundaries. Detailed rules live in atomic skills — **read them at each step**.
+
+`dev-flow` must turn partial user requirements into a closed, reviewable interaction / behavior chain before implementation. A user-provided fragment is not enough to code from until the missing surrounding states, transitions, fallbacks, and forbidden states have been made explicit and approved by the human.
+
+### Completion contract
+
+Code written is not completion. The normal closed loop is:
+
+```text
+requirements approved → implement → build → run on device → operate UI → read logs
+                     ↑                                                     ↓
+                     └────────── fix and rerun until verified ──────────────────────────┘
+```
+
+Continue automatically while the next action is safe, authorized, and inside the approved scope. Stop only for a genuine human decision or external blocker, such as an unresolved product choice, unavailable device/account, missing authority, or the three-round review stop gate. Do not ask the human to reproduce UI steps that registered runtime tooling can perform.
 
 ## When to use
 
@@ -40,7 +58,7 @@ If unsure → ask once.
 | `commit-gate` | block commit until user confirms |
 | `zentao-bug-gate` | ZenTao id + resolve (conditional) |
 
-Supporting skills/tools (invoked by atomic skills or this orchestrator): `orchestrator_mcp` `code_review`, `gstack-review`, `gstack-investigate`, `bugkb`, `git-commit-convention`, `zentao`.
+Supporting skills/tools (invoked by atomic skills or this orchestrator): `orchestrator_mcp` `code_review`, `gstack-review`, `gstack-investigate`, `bugkb`, `git-commit-convention`, `zentao`, and `LookDebugBridge` / `lookdebug-mcp` for iOS runtime UI and Xcode Console inspection.
 
 ---
 
@@ -95,7 +113,96 @@ bash scripts/dev-flow-session.sh end
 Never activate sub-gates “just in case.”
 For API work, **do activate `api-contract` whenever an endpoint or response field participates in business behavior**.
 
-### Step 3 — Confirm before code
+### Step 3 — Requirements Analysis Complete（需求分析完成）
+
+Before asking the user to proceed with coding, resolve the task to a local requirements logic chain. For any task that changes or depends on interaction state, business state, UI copy, rewards, entitlement, countdowns, coupons, membership, payment, server-driven behavior, or fallback behavior, first search existing local logic artifacts.
+
+Local requirement logic lives under `.dev-flow/requirements/`.
+
+Required files:
+
+- `.dev-flow/requirements/index.json` — deterministic routing index.
+- `.dev-flow/requirements/<logic-id-or-slug>.md` — human-readable approved or pending logic chain.
+
+Before creating a new chain, run the repo-local search helper when available:
+
+```bash
+bash scripts/dev-flow-requirements.sh search "<user request + relevant file/API/Figma terms>"
+```
+
+If the helper is missing, search manually with `rg` over `.dev-flow/requirements/index.json` and `.dev-flow/requirements/*.md`; do not skip lookup.
+
+#### Requirement lookup outcomes
+
+- `MATCH_APPROVED`: load the matched file and reuse it as the authoritative chain.
+- `MATCH_NOT_APPROVED`: load the matched file, report that it blocks coding, and ask the human to approve or revise it.
+- `AMBIGUOUS_MATCH`: stop and ask the human which logic chain is in scope.
+- `NO_MATCH`: create a new `pending-human-approval` chain before coding.
+
+Only `status: approved` chains can be directly reused. `draft`, `pending-human-approval`, and `blocked` chains are discoverable but cannot authorize coding.
+
+Each requirements chain must have machine-readable metadata at the top:
+
+```yaml
+---
+logic_id: stable.unique.id
+status: draft|pending-human-approval|approved|blocked
+title: Human readable title
+aliases: [...]
+api_fields: [...]
+figma_nodes: [...]
+code_areas: [...]
+forbidden: [...]
+updated_at: "YYYY-MM-DD"
+---
+```
+
+The index entry for the same `logic_id` must point to that file and include the same routing keys. A `logic_id` is unique; if the logic changes, update the same chain or explicitly supersede it rather than creating a competing approved chain.
+
+The artifact is a workflow artifact. Store it under `.dev-flow/requirements/` when a repo-local dev-flow session exists, and do not include it in product commits unless the user explicitly asks.
+
+If no approved chain exists, produce a compact but complete requirements closure artifact.
+
+The artifact must contain:
+
+- `User fragments:` the relevant user-provided statements, preserved as source-of-truth snippets.
+- `Evidence:` files, Figma nodes, API fields, docs, tickets, logs, screenshots, or reference behavior used.
+- `Closed state chain:` every known state in the flow, including preconditions, display, action, transition, and owner of truth.
+- `State matrix:` state → required UI/interaction → required data fields → fallback/loading/error behavior.
+- `Invariants / forbidden states:` logic that must never appear in code, UI, fallback, tests, or reviewer-accepted behavior.
+- `Golden cases:` the minimum cases that prove the chain, including boundary cases and missing/failed data.
+- `Open decisions:` anything still unknown. If any open decision affects behavior, stop and ask; do not infer it silently.
+
+The requirements closure must explicitly handle surrounding states, not only the fragment the user mentioned. Example for a coupon/check-in flow: non-member, member unsigned, member signed day 1, member signed day 2, member completed/unlocked, coupon expired, coupon used, plus loading/error/missing-server-state behavior if those can occur. The exact business chain comes from the current user-provided requirement and evidence; this example is a shape, not a hardcoded product rule.
+
+#### Human approval gate
+
+Mark the artifact as one of:
+
+- `draft`
+- `pending-human-approval`
+- `approved`
+- `blocked`
+
+Code edits are blocked until the current artifact is `approved` by the human. After approval, the approved chain is authoritative:
+
+- Do not question or weaken it during implementation.
+- Do not replace it with local fallback logic.
+- Do not add a state that is absent from the approved chain.
+- Do not coerce data into a different state to avoid a completed/expired/error branch.
+- If later evidence or user input changes the chain, create/update the artifact and get human approval again before coding that change.
+
+When reporting the plan before coding, include:
+
+```text
+需求分析状态: approved|blocked|pending-human-approval
+整体逻辑链路: ...
+禁止出现的状态/兜底: ...
+Golden cases: ...
+Approved artifact: ...
+```
+
+### Step 4 — Confirm before code
 
 Read **`confirm-gate`**. Wait for user **proceed**.
 
@@ -107,11 +214,26 @@ bash scripts/dev-flow-session.sh confirm-plan [--task "short label"]
 
 Only then may source edits begin.
 
-### Step 4 — Implement
+### Step 5 — Implement
 
 Only confirmed scope. Important decision points → short comments (why/guardrail).
 
-### Step 5 — Code review handoff
+Implementation must trace each changed branch back to the approved requirements closure. When a branch has no matching approved state, stop and update/approve the closure first. Do not create “temporary” fallback states that contradict the approved chain.
+
+#### Runtime debug loop
+
+For an attached iOS Debug app, validate the real behavior end to end instead of waiting for the human to reproduce each step:
+
+1. Use `get_debug_page` and `tap_element` (or equivalent registered LookDebugBridge actions) to navigate the real UI and trigger the target flow.
+2. Use `read_xcode_console` for existing logs or `wait_xcode_console` for new output. Read Xcode's Console on demand; do not persist or duplicate its log stream.
+3. If the code path is reached but existing logs cannot answer the current debugging question, add the smallest targeted diagnostic output after `confirm-gate` approval. Logging edits are source edits and never bypass that gate.
+4. Diagnostic output must be DEBUG-only (`#if DEBUG` or an equivalent compile-time Debug boundary), searchable by stable markers / request IDs, and include enough state to connect the UI action to the result.
+5. Redact credentials, tokens, cookies, signatures, user/device identifiers, and recursively sensitive payload fields. Bound or truncate large payloads. Never add Release logging merely for agent convenience.
+6. Rebuild, rerun the UI flow, and query the Console again. Keep reusable safe diagnostics; remove noisy one-off output before handoff.
+
+Do not claim an endpoint, callback, state transition, or UI result was exercised unless the UI action and matching runtime evidence were both observed.
+
+### Step 6 — Code review handoff
 
 After any source edit and before commit-gate, run a code review stage.
 
@@ -121,7 +243,18 @@ Preferred path:
 orchestrator_mcp → code_review
 ```
 
-Fallback only when `orchestrator_mcp` is unavailable: read/use **`gstack-review`** and clearly state the fallback.
+Before calling `orchestrator_mcp`, do a review-tool health preflight:
+
+- Treat stdio MCP processes as per-session instances. Multiple `python -m orchestrator_mcp` processes are expected when multiple Codex threads are active and are not, by themselves, unhealthy.
+- Read the current Codex thread id from `CODEX_THREAD_ID`. Check only the orchestrator session record for that exact id and verify its PID is alive, its recorded session id matches, and its transport is `stdio`. When the installed orchestrator exposes its session checker, run `python -m orchestrator_mcp.session_runtime --session-id "$CODEX_THREAD_ID"` with the same Python/PYTHONPATH as the configured MCP. Never downgrade review health merely because other thread ids have MCP processes.
+- Never kill, clean up, or classify another thread id's MCP process as stale. If the current thread's record is missing or invalid, report only the current thread unhealthy and use the fallback. Process cleanup must be scoped to the same verified thread id.
+- Treat WebUI separately from MCP session health. WebUI is a singleton service; its process count or port must not be used to infer whether the current stdio MCP session is healthy.
+- Call a non-model health/config endpoint first when available, preferring `orchestrate_effective_config`. For a stdio session, require its `mcp_session.session_id` to equal the current `CODEX_THREAD_ID` and `mcp_session.registered` to be true. If this fails or times out, do not attempt a model review; use fallback and report the current-session tool failure.
+- Keep the model review packet compact enough to complete under Codex MCP's tool timeout. Do not pass a huge raw diff, full build log, or a path to a large artifact and expect the reviewer to read it.
+- Required `review_packet_json` fields for orchestrator review: `task_summary`, `changed_files`, and `diff`. The `diff` field must be an inline, curated diff summary or only the relevant hunks. Put full artifact paths only under `validation` / `known_risks`, not as the primary review input.
+- If the changed scope is too large for one compact review packet, split review by area (for example `pricing core`, `template CTA`, `analytics`) and run separate code_review rounds rather than one oversized request.
+
+Fallback when `orchestrator_mcp` is unavailable, unhealthy, or exceeds the tool timeout: read/use **`gstack-review`** and clearly state the fallback. A timeout is a tool failure, not a passed review.
 
 The main agent must pass a compact context handoff to the reviewer:
 
@@ -132,6 +265,7 @@ The main agent must pass a compact context handoff to the reviewer:
 - `Diff summary:` behavior changes, data/model changes, UI changes, config changes
 - `Validation:` commands/tests/manual checks run and results
 - `Active gates:` api-contract, reference-parity, zentao-bug-gate, bugkb, or none
+- `Approved requirements chain:` path to artifact plus the state matrix / invariants relevant to the diff
 - `Known risks:` edge cases, unverified paths, intentional tradeoffs
 
 The reviewer output must be handed back to the main agent, not treated as the final user answer. The main agent must self-check it:
@@ -141,6 +275,18 @@ The reviewer output must be handed back to the main agent, not treated as the fi
 - Re-run targeted validation after fixes
 - Re-run code review when fixes materially change behavior or touch new files
 - If a finding is not fixed, document why before asking for commit approval
+
+#### Requirements-chain review gate
+
+Before normal code-quality findings can be considered “passed,” the reviewer and main agent must verify the diff against the approved requirements closure:
+
+- Every approved state has an implementation path or an explicitly approved non-code reason.
+- Every implemented state exists in the approved chain.
+- Every fallback/loading/error branch is in the approved chain.
+- Every invariant / forbidden state is absent from the diff.
+- Every golden case has either a test, targeted validation, or documented manual evidence.
+
+If the diff contains an unapproved state, illegal fallback, coerced count/status, locally inferred server state, or UI text/action that contradicts the approved chain, the review result is `revise` or `blocked`. It cannot be accepted as a minor risk merely because the code builds.
 
 #### Review loop gate
 
@@ -176,13 +322,13 @@ The main agent may resume only after explicit user confirmation on how to procee
 
 Do not enter `commit-gate` until the code review handoff has been addressed, or the user explicitly accepts the remaining risk.
 
-### Step 6 — After implementation gates
+### Step 7 — After implementation gates
 
 - Feature path: **`bugkb`** (per `feature-workflow`)
 - Reference path: parity report (per `reference-parity`)
 - ZenTao path: resolve (per `zentao-bug-gate`)
 
-### Step 7 — Commit
+### Step 8 — Commit
 
 Read **`commit-gate`**. When user confirms commit → run. If the script is missing, stop and bootstrap it first; do not silently continue:
 
@@ -203,10 +349,12 @@ dev-flow
   → api-contract? (if endpoint/field/API-driven behavior is involved)
   → reference-parity? (if reference named)
   → zentao-bug-gate? (if ZenTao required)
+  → requirements-analysis-complete → [human approves closed chain]
   → confirm-gate → [user proceed]
   → implement
+  → runtime debug loop? → operate UI → query Xcode Console → add DEBUG-only diagnostics if insufficient → rerun
   → code_review round 1
-  → main-agent self-check → fixes / validation
+  → requirements-chain review + main-agent self-check → fixes / validation
   → code_review round 2? → fixes / validation
   → code_review round 3?
   → [pass] or [blocked for human confirmation]
@@ -229,6 +377,10 @@ dev-flow
 9. Review findings are inputs to the main agent's self-check loop; the main agent remains responsible for deciding, fixing, validating, and explaining residual risk.
 10. Post-edit review is a **three-round gated loop**. After 3 review rounds without reaching the required interaction / behavior standard, stop and wait for human confirmation.
 11. `commit-gate` is forbidden while the three-round review loop is unresolved.
+12. Requirements analysis completion is mandatory before coding any stateful interaction. Partial requirements must be closed into an approved state chain before `confirm-gate`.
+13. The approved requirements chain is authoritative. Code, fallback, tests, and review must not invent, remove, coerce, or silently reinterpret states.
+14. Build success, type success, or a reviewer pass is invalid if the diff violates the approved requirements chain.
+15. Runtime claims require matched UI-operation and Console evidence. When diagnostics are insufficient, improve them only after `confirm-gate`, under a compile-time Debug boundary, with redaction and bounded output; never create a second persisted log store.
 
 ---
 
