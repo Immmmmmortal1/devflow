@@ -202,6 +202,20 @@ Golden cases: ...
 Approved artifact: ...
 ```
 
+#### Localization / text replacement gate
+
+Activate this gate whenever a task changes localized copy, string catalogs, per-locale resource files, translation tables, or language-specific entries for the same semantic text.
+
+Before confirmation or implementation:
+
+1. Enumerate every supported locale from the project's actual localization structure; do not limit scope to the locale named in the request or the first matching file.
+2. Build a complete matrix of `locale → key/entry → authoritative target value → status` for the semantic text being changed.
+3. Treat all supported locales that expose the same semantic text as required scope by default. Each locale must use its correct translated value; never copy one locale's text into other locales as a substitute for translation.
+4. If any locale lacks an authoritative target value, mark the requirement `blocked`, list the missing locales, and ask the human for the missing copy. Do not guess, machine-invent, or silently omit translations.
+5. Allow a locale-specific change only when the human explicitly approves that exception. The confirmation plan must list every excluded locale and the reason it is excluded.
+
+Implementation and review must verify the complete locale matrix. A partial-locale replacement is `revise` or `blocked`, never a minor accepted risk. Golden validation must assert every required locale/key has the expected value and that explicitly excluded locales have no unintended diff.
+
 ### Step 4 — Confirm before code
 
 Read **`confirm-gate`**. Wait for user **proceed**.
@@ -381,6 +395,7 @@ dev-flow
 13. The approved requirements chain is authoritative. Code, fallback, tests, and review must not invent, remove, coerce, or silently reinterpret states.
 14. Build success, type success, or a reviewer pass is invalid if the diff violates the approved requirements chain.
 15. Runtime claims require matched UI-operation and Console evidence. When diagnostics are insufficient, improve them only after `confirm-gate`, under a compile-time Debug boundary, with redaction and bounded output; never create a second persisted log store.
+16. Localized text replacement is incomplete until every supported locale for the same semantic text is mapped, updated, and validated. Missing copy blocks implementation; only an explicit human-approved locale exception may narrow the scope.
 
 ---
 
