@@ -2,8 +2,13 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-STATE_DIR="$ROOT/.dev-flow"
-STATE_FILE="$STATE_DIR/session.json"
+SESSION_ID="${DEV_FLOW_SESSION_ID:-${CODEX_THREAD_ID:-local}}"
+if [[ ! "$SESSION_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]; then
+  echo "Invalid dev-flow session id: $SESSION_ID" >&2
+  exit 2
+fi
+STATE_DIR="$ROOT/.dev-flow/sessions"
+STATE_FILE="$STATE_DIR/$SESSION_ID.json"
 
 usage() {
   cat <<'EOF'
@@ -13,6 +18,9 @@ Usage:
   scripts/dev-flow-session.sh approve-commit [--task "label"]
   scripts/dev-flow-session.sh end
   scripts/dev-flow-session.sh status
+
+Session selection:
+  DEV_FLOW_SESSION_ID, then CODEX_THREAD_ID, otherwise "local".
 EOF
 }
 
@@ -51,16 +59,17 @@ write_state() {
   local session_type="${2:-}"
   local task="${3:-}"
   mkdir -p "$STATE_DIR"
-  python3 - "$STATE_FILE" "$action" "$session_type" "$task" "$(now_utc)" <<'PY'
+  /usr/bin/python3 - "$STATE_FILE" "$SESSION_ID" "$action" "$session_type" "$task" "$(now_utc)" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
-action = sys.argv[2]
-session_type = sys.argv[3]
-task = sys.argv[4]
-timestamp = sys.argv[5]
+session_id = sys.argv[2]
+action = sys.argv[3]
+session_type = sys.argv[4]
+task = sys.argv[5]
+timestamp = sys.argv[6]
 
 data = {}
 if path.exists():
@@ -71,6 +80,7 @@ if path.exists():
 
 if action == "start":
     data = {
+        "session_id": session_id,
         "active": True,
         "type": session_type,
         "task": task,
@@ -83,6 +93,7 @@ elif action == "confirm-plan":
     if not data.get("active"):
         raise SystemExit("No active dev-flow session. Run start first.")
     data["confirmed_at"] = timestamp
+    data["session_id"] = session_id
     if task:
         data["task"] = task
 elif action == "approve-commit":
@@ -91,11 +102,13 @@ elif action == "approve-commit":
     if not data.get("confirmed_at"):
         raise SystemExit("Plan is not confirmed. Run confirm-plan first.")
     data["commit_approved_at"] = timestamp
+    data["session_id"] = session_id
     if task:
         data["task"] = task
 elif action == "end":
     if not data:
-        data = {"active": False}
+        data = {"session_id": session_id, "active": False}
+    data["session_id"] = session_id
     data["active"] = False
     data["ended_at"] = timestamp
 else:

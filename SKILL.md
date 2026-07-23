@@ -78,7 +78,7 @@ A reusable minimum script must support:
 - `end`
 - `status`
 
-It must write `.dev-flow/session.json` with `active`, `type`, `task`, `started_at`, `confirmed_at`, `commit_approved_at`, and `ended_at`.
+It must isolate state per Codex task. Resolve the session id from `DEV_FLOW_SESSION_ID`, then `CODEX_THREAD_ID`, otherwise `local`, and write `.dev-flow/sessions/<session-id>.json` with `session_id`, `active`, `type`, `task`, `started_at`, `confirmed_at`, `commit_approved_at`, and `ended_at`. One task must never read, overwrite, confirm, approve, or end another task's state. Keep legacy `.dev-flow/session.json` files untouched and do not auto-migrate them to an arbitrary task.
 
 Only after the script exists, start mechanical session:
 
@@ -238,6 +238,8 @@ Implementation must trace each changed branch back to the approved requirements 
 
 For an attached iOS Debug app, validate the real behavior end to end instead of waiting for the human to reproduce each step:
 
+0. Establish the Xcode/LLDB session before runtime validation. The app must be launched from the Xcode GUI with the target scheme and physical device selected, `Debug executable` enabled, and the Xcode Debug Area Console showing the attached `KakaPic` process. If `read_xcode_console` or `wait_xcode_console` reports `xcode_window_not_found`, no attached LLDB process, or otherwise cannot read the Xcode Console, **block immediately and alert the user**. Do not substitute `idevicesyslog`, `start_device_log_cap`, or any other device/system log stream; those are not LLDB/Xcode Console logs. Resume only after the Xcode/LLDB session is visibly established.
+
 1. Use `get_debug_page` and `tap_element` (or equivalent registered LookDebugBridge actions) to navigate the real UI and trigger the target flow.
 2. Use `read_xcode_console` for existing logs or `wait_xcode_console` for new output. Read Xcode's Console on demand; do not persist or duplicate its log stream.
 3. If the code path is reached but existing logs cannot answer the current debugging question, add the smallest targeted diagnostic output after `confirm-gate` approval. Logging edits are source edits and never bypass that gate.
@@ -260,10 +262,10 @@ orchestrator_mcp → code_review
 Before calling `orchestrator_mcp`, do a review-tool health preflight:
 
 - Treat stdio MCP processes as per-session instances. Multiple `python -m orchestrator_mcp` processes are expected when multiple Codex threads are active and are not, by themselves, unhealthy.
-- Read the current Codex thread id from `CODEX_THREAD_ID`. Check only the orchestrator session record for that exact id and verify its PID is alive, its recorded session id matches, and its transport is `stdio`. When the installed orchestrator exposes its session checker, run `python -m orchestrator_mcp.session_runtime --session-id "$CODEX_THREAD_ID"` with the same Python/PYTHONPATH as the configured MCP. Never downgrade review health merely because other thread ids have MCP processes.
+- Read the current Codex thread id from `CODEX_THREAD_ID` when it is available. Codex's MCP launcher may not forward that variable into the MCP child; the installed wrapper then uses a `codex-mcp-*` process-scoped session id. Prefer the `mcp_session` object returned by `orchestrate_effective_config`: require `transport=stdio`, `registered=true`, and a live PID. If the MCP-reported session id equals `CODEX_THREAD_ID`, also verify the exact thread record with `python -m orchestrator_mcp.session_runtime --session-id "$CODEX_THREAD_ID"`; do not mark the MCP unhealthy solely because the child session id differs or the exact thread record is absent. Never downgrade review health merely because other thread ids have MCP processes.
 - Never kill, clean up, or classify another thread id's MCP process as stale. If the current thread's record is missing or invalid, report only the current thread unhealthy and use the fallback. Process cleanup must be scoped to the same verified thread id.
 - Treat WebUI separately from MCP session health. WebUI is a singleton service; its process count or port must not be used to infer whether the current stdio MCP session is healthy.
-- Call a non-model health/config endpoint first when available, preferring `orchestrate_effective_config`. For a stdio session, require its `mcp_session.session_id` to equal the current `CODEX_THREAD_ID` and `mcp_session.registered` to be true. If this fails or times out, do not attempt a model review; use fallback and report the current-session tool failure.
+- Call a non-model health/config endpoint first when available, preferring `orchestrate_effective_config`. For a stdio session, require its `mcp_session.transport` to be `stdio`, its `mcp_session.registered` to be true, and its reported PID to be alive. Require equality with `CODEX_THREAD_ID` only when the MCP child actually reports that thread id; a `codex-mcp-*` process-scoped id is valid when registered and alive. If this fails or times out, do not attempt a model review; use fallback and report the current-session tool failure.
 - Keep the model review packet compact enough to complete under Codex MCP's tool timeout. Do not pass a huge raw diff, full build log, or a path to a large artifact and expect the reviewer to read it.
 - Required `review_packet_json` fields for orchestrator review: `task_summary`, `changed_files`, and `diff`. The `diff` field must be an inline, curated diff summary or only the relevant hunks. Put full artifact paths only under `validation` / `known_risks`, not as the primary review input.
 - If the changed scope is too large for one compact review packet, split review by area (for example `pricing core`, `template CTA`, `analytics`) and run separate code_review rounds rather than one oversized request.
@@ -401,9 +403,9 @@ dev-flow
 
 ## Mechanical gate
 
-Every project using dev-flow needs at least the script-backed gate. Repos with shell/editor hooks can enforce it automatically; repos without hooks still use `.dev-flow/session.json` as an auditable gate state.
+Every project using dev-flow needs at least the script-backed gate. Repos with shell/editor hooks can enforce it automatically; repos without hooks still use `.dev-flow/sessions/<session-id>.json` as an auditable, task-scoped gate state.
 
-When `.dev-flow/session.json` exists and hooks are installed:
+When the current task's `.dev-flow/sessions/<session-id>.json` exists and hooks are installed:
 
 | Hook | Blocks |
 |------|--------|
