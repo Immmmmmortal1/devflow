@@ -60,7 +60,7 @@ If unsure → ask once.
 
 Supporting skills/tools (invoked by atomic skills or this orchestrator): `orchestrator_mcp` `code_review`, `gstack-review`, `gstack-investigate`, `bugkb`, `git-commit-convention`, `zentao`, and `LookDebugBridge` / `lookdebug-mcp` for iOS runtime UI and Xcode Console inspection.
 
-The five foundational skills listed above are maintained as the canonical repository bundle under `skills/<skill-name>/SKILL.md`. Keep the corresponding global `~/.codex/skills/<skill-name>/SKILL.md` paths linked to this bundle by running `bash scripts/link-global-skills.sh`; do not maintain a second copied version in the global directory.
+The eight foundational skills listed above are maintained as the canonical repository bundle under `skills/<skill-name>/SKILL.md`. Keep the corresponding global `~/.codex/skills/<skill-name>/SKILL.md` paths linked to this bundle by running `bash scripts/link-global-skills.sh`; do not maintain a second copied version in the global directory. Bundled resources, such as `reference-parity/examples/purchase-verify-reference-keys.json`, must stay with their skill.
 
 ---
 
