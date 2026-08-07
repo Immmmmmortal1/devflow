@@ -1,0 +1,4 @@
+interface:
+  display_name: "Environment Health Check"
+  short_description: "Check development service and skill availability"
+  default_prompt: "Use $environment-health-check to verify DebugBridge, Review MCP, and Figma REST API readiness."

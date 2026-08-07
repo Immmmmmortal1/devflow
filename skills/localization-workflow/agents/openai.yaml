@@ -1,0 +1,4 @@
+interface:
+  display_name: "Localization Workflow"
+  short_description: "Keep every locale aligned"
+  default_prompt: "Use $localization-workflow to audit these locale strings and produce a complete, validated localization matrix."

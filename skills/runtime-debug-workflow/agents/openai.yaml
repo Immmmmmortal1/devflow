@@ -1,0 +1,4 @@
+interface:
+  display_name: "Runtime Debug Workflow"
+  short_description: "Verify real device runtime evidence"
+  default_prompt: "Use $runtime-debug-workflow to build, operate, inspect, and verify this iOS flow on the physical device."

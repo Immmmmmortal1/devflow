@@ -1,0 +1,4 @@
+interface:
+  display_name: "Code Review Workflow"
+  short_description: "Run independent code review safely"
+  default_prompt: "Use $code-review-workflow to run a bounded code review with MCP health checks, compact context, and fallback handling."

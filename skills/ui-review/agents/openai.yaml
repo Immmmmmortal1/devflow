@@ -1,0 +1,4 @@
+interface:
+  display_name: "UI Review"
+  short_description: "Figma parity review for existing iOS UI"
+  default_prompt: "Use $ui-review to compare an existing iOS screen with Figma, bind runtime elements, scan runtime extras, and report parity findings."

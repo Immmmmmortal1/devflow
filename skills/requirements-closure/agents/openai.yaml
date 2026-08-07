@@ -1,0 +1,4 @@
+interface:
+  display_name: "Requirements Closure"
+  short_description: "Close states before implementation"
+  default_prompt: "Use $requirements-closure to turn this request into an evidence-backed, approval-ready state contract."

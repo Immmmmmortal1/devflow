@@ -11,7 +11,7 @@ No code changes until the user confirms the plan.
 
 ## When
 
-Run after analysis (`feature-workflow` or `bug-workflow`, plus `reference-parity` if active) and **before any file edit**.
+Run after analysis (`feature-workflow` or `bug-workflow`) and **before any file edit**.
 
 ## Output template
 
@@ -28,7 +28,7 @@ Root cause: (bugs only)
 Files likely to change:
 Plan:
 Validation:
-Sub-gates active: [none | reference-parity | zentao-bug-gate | ...]
+Sub-gates active: [none | zentao-bug-gate | ...]
 Need user confirmation before coding: yes
 ```
 
@@ -71,7 +71,6 @@ All must pass before outputting the template:
 
 - `Evidence read` is empty but plan proposes concrete changes
 - `In scope` includes work the user did not ask for
-- `reference-parity` is active but reference path/contract is missing
 - **Bug:** any step-completion check above fails — **do not output the template**; complete the missing step
 - **Bug:** `Root cause` present but lacks code/runtime evidence
 - **Feature:** `Analysis tool used` omits `gstack-review`

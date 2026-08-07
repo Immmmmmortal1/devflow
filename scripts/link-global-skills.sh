@@ -15,10 +15,15 @@ SKILLS=(
   bug-workflow
   code-grounded
   confirm-gate
+  code-review-workflow
   commit-gate
   api-contract
-  reference-parity
   zentao-bug-gate
+  requirements-closure
+  localization-workflow
+  runtime-debug-workflow
+  environment-health-check
+  ui-review
 )
 
 link_file() {
@@ -59,7 +64,27 @@ for skill in "${SKILLS[@]}"; do
   link_file "$source_file" "$global_file"
 done
 
-link_file "$ROOT/skills/reference-parity/examples/purchase-verify-reference-keys.json" \
-  "$GLOBAL_SKILLS_ROOT/reference-parity/examples/purchase-verify-reference-keys.json"
+link_file "$ROOT/skills/requirements-closure/references/requirements-artifact-template.md" \
+  "$GLOBAL_SKILLS_ROOT/requirements-closure/references/requirements-artifact-template.md"
+
+link_file "$ROOT/skills/localization-workflow/references/localization-matrix-template.md" \
+  "$GLOBAL_SKILLS_ROOT/localization-workflow/references/localization-matrix-template.md"
+
+link_file "$ROOT/skills/runtime-debug-workflow/references/runtime-evidence-template.md" \
+  "$GLOBAL_SKILLS_ROOT/runtime-debug-workflow/references/runtime-evidence-template.md"
+
+link_file "$ROOT/skills/code-review-workflow/references/review-packet-template.md" \
+  "$GLOBAL_SKILLS_ROOT/code-review-workflow/references/review-packet-template.md"
+
+for route in \
+  index.md \
+  review-loop.md \
+  code-quality-review.md \
+  requirements-chain-review.md \
+  api-contract-review.md \
+  ui-parity-review.md; do
+  link_file "$ROOT/skills/code-review-workflow/routes/$route" \
+    "$GLOBAL_SKILLS_ROOT/code-review-workflow/routes/$route"
+done
 
 echo "Linked ${#SKILLS[@]} global skills and their bundled resources to $ROOT/skills"
