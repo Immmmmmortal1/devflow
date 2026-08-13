@@ -61,93 +61,18 @@ Run `scripts/validate-ui-review-artifacts.sh` at the end of Steps 1, 2, and 4 wi
 
 ## Compare rules (single source of truth)
 
-These are the only minimum-unit kinds and their acceptance criteria. **Step 1** assigns each
-minimum unit its `unit_kind`; **Step 2** compares against these criteria on the live UI; **Step 3**
-re-applies the exact same criteria to verify a repair. Do not restate or fork these rules elsewhere
-— reference this block.
+The minimum-unit implementation and acceptance rules have a **single source of truth** in the
+`figma-ui-gates` repository: `figma-ui-gates/rules/*.md`, split by `unit_kind`
+(`text`, `button-text`, `button-image`, `button-text-icon`, `image`) plus `rules/screen.md` for
+screen-level checks. Each rule file is dual-purpose — implement to it, verify against it — and
+defines its own acceptance criteria, tolerance limits, and evidence-normalization shape (enforced
+mechanically by `validate-ui-review-artifacts.py`).
 
-### unit_kind taxonomy
-
-```text
-text                a text leaf (label)
-button-text         a button whose content is text only
-button-image        a button whose content is image/icon only
-button-text-icon    a button with both text and an icon
-image               a non-interactive image / icon / exported visual
-```
-
-Classification rules:
-
-- A button is classified by its **content**, not by being a control:
-  - text only → `button-text`
-  - image/icon only → `button-image`
-  - text + icon → `button-text-icon`
-- An interactive unit with both text and icon must stay `button-text-icon` (never collapse to one
-  exported image); a purely visual image/icon is `image`.
-- A localizable text node is never `image`.
-
-### Acceptance criteria per kind
-
-| unit_kind | Compare / expect |
-|---|---|
-| `text` | font, font size, color, **x/y origin only**; no hard-coded width/height; `numberOfLines = 0`; localization-safe. Figma w/h is design render, not a size lock. Mismatch on font/size/color/origin → finding |
-| `button-text` | Same as `text` (plus a hit target) |
-| `button-image` | Compare image **hash** vs the Figma-exported asset; if hash differs → export Figma asset and replace the runtime image; compare frame origin/size in points |
-| `button-text-icon` | Expect `UIView` + tap gesture (text + icon as subviews under the hit container); text by `text` rules, icon by image-hash rules; wrong control model (e.g. single rasterized button image) → finding |
-| `image` | Compare image **hash** vs the Figma-exported asset; if hash differs → export + replace; compare frame origin/size in points |
-
-### Evidence normalization
-
-- **Image identity:** hash the original Figma export file and the source asset file before asset
-  catalog compilation using SHA-256. Runtime proof is a two-part chain:
-  `runtime node → code/bundle asset name → source asset SHA-256`. Do not claim a live pixel hash
-  unless DebugBridge explicitly returns bytes and the hash algorithm/input are recorded.
-- **Coordinates:** convert Figma and runtime frames into the target root content coordinate space.
-  Record device scale, safe-area inset, and root origin. Default tolerance is `±0.5 pt` for origin
-  and size unless the target project records a stricter tolerance.
-- **Font:** compare resolved PostScript family/name, weight, point size, line height, alignment, and
-  line count. Size tolerance is `±0.1 pt`.
-- **Color:** normalize to extended-sRGB RGBA; each channel tolerance is `1/255`.
-- Every `ok` row records measured value, expected value, tolerance, and evidence path. A naked
-  “looks equal” is not evidence.
-
-Machine-readable evidence shape:
-
-```text
-text / button-text:
-  runtime_path
-  expected|measured: { font_name, font_size, color_rgba, origin }
-  tolerance: { origin_pt, font_size_pt, color_channel }
-  layout: { number_of_lines, hardcoded_width, hardcoded_height, localization_safe }
-
-image / button-image:
-  runtime_path, figma_sha256, source_asset_sha256, runtime_asset_name
-  expected_frame, measured_frame
-  tolerance: { origin_pt, size_pt }
-
-button-text-icon:
-  text: <text evidence>
-  icon: <image evidence>
-
-screen rows:
-  runtime_path, expected, measured
-
-missing unit:
-  runtime_path, expected, measured: null, binding_attempts: [ ... ]
-```
-
-For `ok`, the validator recomputes numeric deltas against the canonical tolerance limits and
-requires image source/Figma hashes to match. `wrong`/`missing` requires non-empty `findings`.
-
-### Screen-level criteria
-
-| Check | Expect |
-|---|---|
-| `screen.background` | Screen / root content background color matches Figma |
-| `screen.base_layout` | **Has list/repeated data → `UICollectionView`** as the overall host; **no list → `UIScrollView`** content view whose content height adapts to content. One primary vertical scroll owner only |
-
-`screen.base_layout` is **decided from Figma structure in Step 1** (list vs non-list) and only
-**verified** on the live UI in Step 2.
+**Step 1**, **Step 2**, and **Step 3** must reference `figma-ui-gates/rules/` for every
+`unit_kind` they touch. Do **not** restate, summarize, or fork these rules in this file — load the
+relevant `rules/*.md` on demand by `unit_kind` and apply it directly. When a page's
+`rules_used.json` is present, load only the rule files it names; a `unit_kind` not on the page is
+not loaded.
 
 ---
 

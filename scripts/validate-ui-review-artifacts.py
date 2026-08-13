@@ -210,6 +210,46 @@ def load_figma_text_descendant_map(workspace: Path) -> dict[str, bool] | None:
     return {node_id: True for node_id in text_ids}
 
 
+def validate_rules_used(
+    workspace: Path, detail_minimums: dict[str, dict[str, Any]]
+) -> None:
+    """When rules_used.json is present, its rules_used set must equal the deduplicated
+    unit_kind set across all reviewed minimum units.
+
+    rules_used.json is produced by figma-ui-gates G2 (producer: figma-ui-gates) and is
+    optional for ui-review workspaces. When present, it is cross-checked so the on-demand
+    rule set declared for the page matches what the split actually classified.
+    """
+    rules_path = workspace / "rules_used.json"
+    if not rules_path.is_file():
+        return
+    payload = load_json(rules_path, "rules_used")
+    if payload.get("schema_version") != 1:
+        raise ValidationError("rules_used.json schema_version must be 1")
+    raw = payload.get("rules_used")
+    if not isinstance(raw, list):
+        raise ValidationError("rules_used.json rules_used must be an array")
+    rules_set: set[str] = set()
+    for item in raw:
+        if not isinstance(item, str) or not item.strip():
+            raise ValidationError("rules_used.json rules_used contains an invalid entry")
+        if item not in UNIT_KINDS:
+            raise ValidationError(
+                f"rules_used.json rules_used has invalid unit_kind: {item} "
+                f"(allowed: {sorted(UNIT_KINDS)})"
+            )
+        if item in rules_set:
+            raise ValidationError(f"rules_used.json rules_used contains duplicate: {item}")
+        rules_set.add(item)
+    unit_kind_set = {decision["unit_kind"] for decision in detail_minimums.values()}
+    if rules_set != unit_kind_set:
+        raise ValidationError(
+            "rules_used.json rules_used set does not match the unit_kind set of reviewed "
+            f"minimum units (rules_used={sorted(rules_set)}, "
+            f"units={sorted(unit_kind_set)})"
+        )
+
+
 def validate_split(workspace: Path, session_id: str) -> set[str]:
     manifest = load_json(workspace / "manifest.json", "manifest")
     require_identity(manifest, session_id, "manifest")
@@ -328,6 +368,7 @@ def validate_split(workspace: Path, session_id: str) -> set[str]:
 
     if sweep.get("minimum_unit_count") != len(ids):
         raise ValidationError("structure sweep minimum_unit_count does not match index")
+    validate_rules_used(workspace, detail_minimums)
     return ids
 
 
