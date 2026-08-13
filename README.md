@@ -152,8 +152,8 @@ devflow/
 
 ```text
 devskills/
-├──devflow/           # 本仓
-└── figma-ui-gates/    # https://github.com/Immmmmmortal1/figma-ui-gates
+├── devflow/              # 本仓
+└── figma-ui-gates/       # https://github.com/Immmmmmortal1/figma-ui-gates
 ```
 
 
