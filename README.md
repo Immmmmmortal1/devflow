@@ -16,9 +16,11 @@
 
 ## Figma UI Gates（新 UI）
 
-新 Figma 界面属于 `feature` 的条件子路由，**不是**独立一等路由。实现合同在：
+新 Figma 界面属于 `feature` 的条件子路由，**不是**独立一等路由。
 
-- [`skills/figma-ui-gates/SKILL.md`](./skills/figma-ui-gates/SKILL.md)
+**独立仓库（真相源）：** [Immmmmmortal1/figma-ui-gates](https://github.com/Immmmmmortal1/figma-ui-gates)
+
+本仓仅通过 `skills/figma-ui-gates/SKILL.md` **符号链接**到并列目录 `../figma-ui-gates/SKILL.md`，便于 `link-*-skills.sh` 安装；请勿再把全文嵌进本仓。
 
 顺序（不可跳过 / 不可手写“已通过”）：
 
@@ -141,10 +143,19 @@ devflow/
 │   ├── fixtures/            # 校验器夹具
 │   └── test-*.sh
 └── skills/
-    ├── figma-ui-gates/      # 新 UI G0–G12
+    ├── figma-ui-gates/      # 符号链接 → 独立仓 ../figma-ui-gates
     ├── ui-review/           # 已有页 parity
     └── …                    # 其它条件 / 门禁 skill
 ```
+
+并列克隆示例：
+
+```text
+devskills/
+├──devflow/          # 本仓
+└── figma-ui-gates/   # https://github.com/Immmmmmortal1/figma-ui-gates
+```
+
 
 ## 渲染态检查约定
 
