@@ -1,0 +1,13 @@
+{
+  "anchor": "figma.2985_24400",
+  "found": true,
+  "unique": true,
+  "node": {
+    "className": "UIImageView",
+    "accessibilityIdentifier": "figma.2985_24400",
+    "imageSize": {
+      "width": 370,
+      "height": 60
+    }
+  }
+}

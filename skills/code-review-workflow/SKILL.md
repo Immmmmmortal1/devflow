@@ -24,7 +24,7 @@ Current routes:
 - [code-quality-review.md](routes/code-quality-review.md) — generic source correctness and regression review.
 - [requirements-chain-review.md](routes/requirements-chain-review.md) — approved requirements versus implementation.
 - [api-contract-review.md](routes/api-contract-review.md) — API field/business/UI contract review.
-- [ui-parity-review.md](routes/ui-parity-review.md) — source review that consumes Figma/UI parity evidence.
+- [ui-parity-review.md](routes/ui-parity-review.md) — post-fix Review MCP for authorized `ui-review` repairs.
 
 The shared review loop in [review-loop.md](routes/review-loop.md) handles finding decisions,
 validation reruns, and the three-round stop gate for every route. It is a route protocol, not a

@@ -19,12 +19,12 @@ conditional_line="$(line_of '### 3. Activate conditional skills' "$ORCHESTRATOR"
 (( health_line > classify_line ))
 (( health_line < conditional_line ))
 
-for capability in DebugBridge 'Review MCP' figma-rest-api; do
+for capability in 'App launch' DebugBridge 'Review MCP' figma-rest-api; do
   /usr/bin/grep -qF "$capability" "$ORCHESTRATOR"
   /usr/bin/grep -qF "$capability" "$HEALTH_SKILL"
 done
 
-/usr/bin/grep -qF 'All three checks must return `available`' "$ORCHESTRATOR"
+/usr/bin/grep -qF 'All four checks must return `available`' "$ORCHESTRATOR"
 /usr/bin/grep -qF '`blocked` or `not-run`' "$ORCHESTRATOR"
 /usr/bin/grep -qF 'does not participate in route classification' "$ORCHESTRATOR"
 /usr/bin/grep -qF 'every capability must be `available`' "$HEALTH_SKILL"

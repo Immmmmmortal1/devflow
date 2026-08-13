@@ -10,7 +10,7 @@ handoff only.
 | `code-quality-review` | Any source edit needing generic independent review | correctness, regressions, security, concurrency, and maintainability findings |
 | `requirements-chain-review` | An approved requirements artifact governs the changed behavior | state, fallback, invariant, and Golden case compliance |
 | `api-contract-review` | API fields or server-driven behavior are changed or consumed | field → business → UI/interaction mapping and contract validation |
-| `ui-parity-review` | A UI change has Figma/runtime parity evidence or an authorized UI repair | binding, extra-element, runtime, and approved parity-finding compliance |
+| `ui-parity-review` | After `ui-review` authorized source repairs need independent Review MCP | diff matches authorized findings; bindings/extras/anchors preserved |
 
 All routes also use [review-loop.md](review-loop.md) for finding decisions, validation reruns, and
 the three-round stop gate.

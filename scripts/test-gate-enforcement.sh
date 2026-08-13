@@ -3,23 +3,36 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_ROOT="$(/usr/bin/mktemp -d)"
-trap '/usr/bin/trash "$TMP_ROOT"' EXIT
+trap '/bin/rm -rf -- "$TMP_ROOT"' EXIT
 
-/bin/mkdir -p "$TMP_ROOT/scripts"
+/bin/mkdir -p "$TMP_ROOT/scripts" "$TMP_ROOT/bin"
 /bin/cp "$ROOT/scripts/dev-flow-session.sh" "$TMP_ROOT/scripts/dev-flow-session.sh"
 /bin/cp "$ROOT/scripts/environment-health-check.sh" "$TMP_ROOT/scripts/environment-health-check.sh"
+/bin/cp "$ROOT/scripts/resolve-dev-flow-session-id.sh" "$TMP_ROOT/scripts/resolve-dev-flow-session-id.sh"
+cat > "$TMP_ROOT/bin/app-launch-probe" <<'EOF'
+#!/usr/bin/env bash
+/usr/bin/python3 - "${DEV_FLOW_SESSION_ID}" <<'PY'
+import json, sys
+print(json.dumps({"producer":"XcodeBuildMCP","schema_version":1,"session_id":sys.argv[1],
+                  "status":"available","build_run_device":"success",
+                  "device_transport":"wired","app_launched":True}))
+PY
+EOF
+/bin/chmod +x "$TMP_ROOT/bin/app-launch-probe"
 
 run_for() {
   DEV_FLOW_SESSION_ID=gate-test /bin/bash "$TMP_ROOT/scripts/dev-flow-session.sh" "$@"
 }
 
 DEV_FLOW_SESSION_ID=gate-test \
+  DEV_FLOW_APP_LAUNCH_HEALTH_CMD="$TMP_ROOT/bin/app-launch-probe" \
   DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD=/usr/bin/true \
   DEV_FLOW_REVIEW_MCP_HEALTH_CMD=/usr/bin/true \
   DEV_FLOW_FIGMA_REST_HEALTH_CMD=/usr/bin/true \
   /bin/bash "$TMP_ROOT/scripts/dev-flow-session.sh" start --type feature --task "gate test" >/dev/null
 
 DEV_FLOW_SESSION_ID=gate-test \
+  DEV_FLOW_APP_LAUNCH_HEALTH_CMD="$TMP_ROOT/bin/app-launch-probe" \
   DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD=/usr/bin/true \
   DEV_FLOW_REVIEW_MCP_HEALTH_CMD=/usr/bin/true \
   DEV_FLOW_FIGMA_REST_HEALTH_CMD=/usr/bin/true \
@@ -31,13 +44,14 @@ run_for confirm-plan >/dev/null
 write_report() {
   local name="$1"
   local status="$2"
-  /usr/bin/python3 - "$TMP_ROOT/$name.json" "$status" <<'PY'
+  /usr/bin/python3 - "$TMP_ROOT/$name.json" "$status" "$TMP_ROOT" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 name = Path(sys.argv[1]).stem
 status = sys.argv[2]
+tmp_root = Path(sys.argv[3])
 report = {
     "producer": "test",
     "schema_version": 1,
@@ -48,6 +62,70 @@ report = {
 }
 if name == "figma_ui":
     report["gates"] = {f"G{i}": "pass" for i in range(13)}
+    fixture = tmp_root / "g6-fixture"
+    source = fixture / "source"
+    gates = fixture / "gates"
+    runtime = fixture / "runtime"
+    gates.mkdir(parents=True, exist_ok=True)
+    runtime.mkdir(parents=True, exist_ok=True)
+    source.mkdir(parents=True, exist_ok=True)
+    gates.joinpath("G6-assets.json").write_text(
+        json.dumps(
+            {
+                "rules": ["collapsed non-interactive visual units must use exported assets in runtime"],
+                "assets": [
+                    {
+                        "figma_id": "2985:24400",
+                        "local_asset": "lovon_checked",
+                        "collapse": True,
+                    }
+                ],
+                "status": "pass",
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    runtime.joinpath("sample-runtime-detail.json").write_text(
+        json.dumps(
+            {
+                "anchor": "figma.2985_24400",
+                "node": {
+                    "className": "UIImageView",
+                    "accessibilityIdentifier": "figma.2985_24400",
+                    "imageSize": {"width": 370, "height": 60},
+                },
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    source.joinpath("CheckedStripView.swift").write_text(
+        'let image = UIImage(named: "lovon_checked")\n'
+        'view.accessibilityIdentifier = "figma.2985_24400"\n',
+        encoding="utf-8",
+    )
+    g6_report = tmp_root / "g6-validation.json"
+    g6_report.write_text(
+        json.dumps(
+            {
+                "workspace": str(fixture),
+                "source_root": str(source),
+                "collapsed_count": 1,
+                "status": "pass",
+                "errors": [],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    report["artifact_workspace"] = str(fixture)
+    report["source_root"] = str(source)
+    report["g6_validation"] = "pass"
+    report["g6_validation_report"] = str(g6_report)
 Path(sys.argv[1]).write_text(json.dumps(report) + "\n")
 PY
 }
@@ -73,6 +151,22 @@ if run_for record-gate --name figma_ui --report "$TMP_ROOT/figma_ui.json" >/dev/
   echo "FAIL: incomplete G0-G12 result reached the session" >&2
   exit 1
 fi
+
+write_report figma_ui pass
+/usr/bin/python3 - "$TMP_ROOT/figma_ui.json" "$TMP_ROOT/figma_ui-missing-g6.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+report = json.loads(Path(sys.argv[1]).read_text())
+for key in ("g6_validation", "g6_validation_report", "artifact_workspace", "source_root"):
+    report.pop(key, None)
+Path(sys.argv[2]).write_text(json.dumps(report) + "\n")
+PY
+if run_for record-gate --name figma_ui --report "$TMP_ROOT/figma_ui-missing-g6.json" >/dev/null 2>&1; then
+  echo "FAIL: figma_ui pass without g6_validation should be rejected" >&2
+  exit 1
+fi
+
 write_report figma_ui pass
 run_for record-gate --name figma_ui --report "$TMP_ROOT/figma_ui.json" >/dev/null
 

@@ -1,0 +1,17 @@
+{
+  "rules": [
+    "text and interaction remain native",
+    "non-interactive image groups may use exported assets"
+  ],
+  "assets": [
+    {
+      "figma_id": "2985:24400",
+      "name": "daily checked",
+      "local_asset": "lovon_checked",
+      "collapse": true,
+      "target_frame": "370x60 pt",
+      "reason": "visual strip"
+    }
+  ],
+  "status": "pass"
+}

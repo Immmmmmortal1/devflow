@@ -1,0 +1,18 @@
+{
+  "rules": [
+    "text and interaction remain native",
+    "collapsed non-interactive visual units must use exported assets in runtime",
+    "rectangle/effect chrome is preserved as exported/equivalent overlay"
+  ],
+  "assets": [
+    {
+      "figma_id": "2985:24400",
+      "name": "daily checked",
+      "local_asset": "lovon_checked",
+      "collapse": true,
+      "target_frame": "370x60 pt",
+      "reason": "visual strip"
+    }
+  ],
+  "status": "pass"
+}

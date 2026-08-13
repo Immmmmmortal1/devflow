@@ -2,146 +2,115 @@
 
 ## Activation
 
-Use for `dev-flow ui_review` when an existing UIKit screen must be compared with a Figma screen or
-when an authorized UI repair needs a parity recheck. This route owns the complete Figma-first
-review criteria. The parent `code-review-workflow` supplies only the independent Review MCP
-transport and review handoff.
+Use after `dev-flow ui_review` has produced **authorized source repairs** and needs an independent
+Review MCP check on the diff.
 
-Do not use this route to build a new screen; use `figma-ui-gates` from the `feature` path for a new
-Figma-driven screen.
+This route is **post-fix only**. It does **not** own whole-page Figma decomposition, live parity
+comparison, human authorization, source repair, on-device verification, or human repair acceptance.
+Those steps are owned by `ui-review`.
 
-## Figma-first evidence prefix
+Do not use this route to build a new screen; use `figma-ui-gates` from the `feature` path.
 
-Lock the Figma URL, target screen/state, device/OS/viewport, project root, comparison scope, and
-artifact workspace under:
+## Activation condition
 
-```text
-.dev-flow/ui/by-url/<sanitized-canonical-figma-url>/
-```
+Activate when **all** of the following are true:
 
-Run the shared prefix in order:
+1. Whole-page `parity-result.baseline.json` exists.
+2. Workspace-level `parity-confirmed.json` authorizes a non-empty `units_to_fix`.
+3. Source edits exist for those authorized ids only.
+4. Every authorized id has `repair-plan.md` and `repair-verify.json`; accepted ids end `ok`, while
+   reverted ids have a verified `revert-verify.json`.
+5. Human `repair-accepted.json` exists with no open rework.
+6. Parent `code-review-workflow` is invoking Review MCP / fallback.
 
-```text
-Figma URL
-→ G0 scope lock
-→ G1 root metadata + first-level Group structure
-→ G1 review MCP gate
-→ G2 current Group detail
-→ G2 review MCP gate
-→ G3 REST design evidence
-→ G4 Group classification
-→ top-to-bottom Figma Group sweep
-```
+If any precondition is missing, return `review-blocked` before MCP invocation. Do not re-run parity
+or repair work from this route.
 
-Use `figma-rest-api` for node and rendered reference evidence. Do not treat REST output as Figma
-MCP output, and do not use runtime screenshots as a substitute for node evidence. Reuse the
-URL-named artifact workspace, `frame_struct.md`, `frame_struct_index.json`, node detail JSON,
-ownership labels, and the same Figma node ids used by the feature's `figma-ui-gates` sub-route.
+## Required evidence
 
-## Runtime binding and comparison
+- Canonical Figma URL, screen/state, artifact workspace, and current `session_id`.
+- `structure/structure-sweep-complete.json` and `parity-result.baseline.json`.
+- `parity-confirmed.json` (`units_to_fix`, skipped, deferred).
+- Current `parity-result.json`, including `runtime_extras` dispositions.
+- `repair-accepted.json`.
+- Per authorized id: `repair-plan.md` plus `repair-verify.json`, or `revert-verify.json`.
+- Runtime binding evidence and mandatory `runtime-verified` report.
+- Changed files and a curated diff containing actual reviewable hunks.
 
-For every Figma Group or minimum unit, inspect the existing UIKit implementation and record one:
+Screenshots alone are not parity evidence.
 
-```text
-exact       accessibilityIdentifier is figma.<node-id>
-inferred    unique match from hierarchy, frame, type, text, or asset
-collapsed   parent asset/container is the intended runtime unit
-system      system-owned element; child binding is not required
-ambiguous   multiple runtime candidates; do not choose silently
-missing     Figma node has no runtime implementation
-```
+## Reviewer question
 
-`ambiguous` and `missing` remain findings. Never invent an anchor or treat a visually similar node
-as a match. After the complete top-to-bottom sweep, compare structure, frame, text, typography,
-color, asset, interaction, and adaptive behavior for every bound element.
+Does this diff implement **only** the human-authorized parity findings, preserve confirmed
+bindings and runtime anchors, avoid inventing/deleting ambiguous or unconfirmed extra elements,
+use exported assets for visual units, and retain validated interaction/state behavior?
 
-### Label rule
-
-For every app-owned `UILabel`, check the existing SnapKit layout:
+## Route-specific packet fields
 
 ```text
-UILabel → SnapKit layout → numberOfLines = 0 → no extra fixed-height constraint
+Review route: ui-parity-review
+Canonical Figma URL:
+Screen / state:
+Parity artifact workspace:
+Session id:
+Baseline parity path + digest:
+parity-confirmed.json summary (units_to_fix / skipped / deferred):
+Current parity-result.json:
+Runtime extras + dispositions:
+repair-accepted.json summary:
+Per-unit repair/revert verification paths:
+Runtime-verified report:
+Authorized ids:
+Changed files:
+Curated diff:
+Known risks:
 ```
 
-The Figma label height is the expected rendered result; do not copy it into
-`height.equalTo(...)` or another fixed-height constraint.
+Ask the independent reviewer to verify:
 
-### Difficult bindings
+1. Diff scope maps exactly to `units_to_fix`; skipped/deferred/`ok` ids are untouched.
+2. Accepted and verified-reverted ids exactly cover the authorized set; no open rework remains.
+3. Confirmed bindings and `figma.<node-id>` anchors are preserved or intentionally remapped with
+   evidence.
+4. Exported visual units still use exported assets; no hand-drawn `draw(_:)` substitute was added.
+5. Ambiguous, unobserved, blocked, or runtime-extra items were not silently treated as authorized.
+6. Runtime evidence comes from the current session/device run and applies the canonical compare
+   rules.
+7. Interaction/state behavior covered by the repair remains valid.
 
-- A unique runtime candidate without a deterministic anchor is `inferred` and requires hierarchy,
-  frame, type, or text evidence.
-- Multiple candidates are `ambiguous`; never force a mapping.
-- For a combined asset group, bind the parent and record the collapse instead of inventing child
-  anchors.
-- For `UITableView` or `UICollectionView`, bind the list/container and reusable cell structure;
-  do not require a permanent Figma node for each dynamic row.
-- For `BaseScrolleController`, verify the single primary scroll owner, content height, bottom
-  closure, and final-control reachability.
-- A missing accessibility identifier is an anchor-remediation finding, not proof that the visual
-  element is missing.
+## Blocking conditions
 
-## Runtime Extra Scan
+- Missing/mismatched baseline, `parity-confirmed.json`, `repair-accepted.json`, or session id.
+- Changed code cannot be mapped to an authorized id.
+- Missing DebugBridge/runtime evidence for an accepted or reverted id.
+- `units_rework` is non-empty or acceptance sets do not exactly cover `units_to_fix`.
+- Review MCP timeout, missing run id, or non-pass without human risk acceptance
+- Diff exceeds authorized ids or edits skipped/deferred/runtime-extra items without disposition.
 
-After the normal Figma binding pass, use DebugBridge from the implemented screen's runtime root
-and traverse visible UIKit elements top-to-bottom. Every runtime element not already bound becomes
-a `runtime-extra` candidate. Record:
+## Pass conditions
+
+- Independent reviewer verdict `pass` (or residual risks explicitly accepted by the human and
+  recorded via `review-loop`)
+- Diff limited to authorized parity repairs
+- Authorization, acceptance, verification, runtime, and current-session evidence are complete
+- No unresolved blocking evidence gaps listed above
+
+## Output status
+
+Return through the parent `code-review-workflow` + `review-loop`:
 
 ```text
-runtime anchor/id:
-runtime type:
-parent hierarchy:
-frame:
-text/asset description:
-source location if known:
-reason not bound to Figma:
-confirmation: pending | keep | adjust | delete | system-exempt | dynamic-exempt
-evidence:
+pass | revise | blocked
 ```
 
-Do not immediately classify an unbound element as an error. Require human confirmation:
+Use `review-loop` for finding decisions (`fix` / `accept risk` / `not applicable`), validation
+reruns, and the three-round stop gate.
 
-- `system-exempt`: status bar, navigation/system chrome, keyboard, or other OS-owned surface;
-- `dynamic-exempt`: data/state-generated content not represented by this Figma state;
-- `keep`: intentional product/runtime element required by approved behavior;
-- `adjust`: valid element whose position, size, style, or visibility needs correction;
-- `delete`: implementation residue that should not exist;
-- `pending`: insufficient evidence to decide.
+## Ownership boundary
 
-An unconfirmed candidate remains open. It cannot be silently deleted, ignored, or counted as a
-Figma mismatch.
-
-## Review MCP handoff
-
-When source changes or an authorized repair needs independent review, call the parent
-`code-review-workflow` with route `ui-parity-review`. The route-specific packet must include:
-
-- canonical Figma URL and scoped groups/states;
-- Figma node/render evidence paths;
-- runtime binding table and DebugBridge UIWindow/tree evidence;
-- extra-element confirmations and authorized finding ids;
-- changed files, curated diff, and verifier/runtime results.
-
-Ask the independent reviewer to verify that the diff implements only authorized parity changes,
-preserves confirmed bindings and runtime anchors, does not silently invent/delete ambiguous
-elements, and retains validated interaction/state behavior. A screenshot alone is not parity
-evidence.
-
-Use the parent `review-loop` for finding decisions, validation reruns, and the three-round stop
-gate. The Review MCP response does not replace Figma REST or DebugBridge evidence.
-
-## Result contract
-
-Record the original and canonical Figma URL, artifact workspace, Figma evidence paths, runtime
-tree evidence, binding table, extra-element confirmations, finding ids, authorized repairs,
-reviewer run id/verdict, parity result, and verifier result.
-
-Return exactly one status:
-
-- `pass`: all scoped bindings and extras are confirmed and no actionable discrepancy remains;
-- `complete-with-findings`: evidence is complete, but confirmed adjustments, deletions, or
-  missing bindings remain;
-- `blocked`: required Figma state, runtime state, binding evidence, reviewer result, tool, or
-  human confirmation is unavailable.
-
-Never claim UI completion from a screenshot, visual similarity guess, or missing binding/reviewer/
-verifier evidence.
+| Owner | Owns |
+|---|---|
+| `ui-review` | Whole-page split, all-unit compare, runtime-extra scan, baseline, authorization, repair, live verify, human acceptance |
+| This route | Post-edit Review MCP packet + acceptance of authorized repair diffs |
+| `code-review-workflow` base | MCP health, packet transport, fallback, normalized handoff |
+| `figma-ui-gates` | New-screen G0–G12 implementation (not this route) |

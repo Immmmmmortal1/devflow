@@ -3,11 +3,12 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_ROOT="$(/usr/bin/mktemp -d)"
-trap '/usr/bin/trash "$TMP_ROOT"' EXIT
+trap '/bin/rm -rf -- "$TMP_ROOT"' EXIT
 
 /bin/mkdir -p "$TMP_ROOT/scripts" "$TMP_ROOT/bin"
 /bin/cp "$ROOT/scripts/dev-flow-session.sh" "$TMP_ROOT/scripts/dev-flow-session.sh"
 /bin/cp "$ROOT/scripts/environment-health-check.sh" "$TMP_ROOT/scripts/environment-health-check.sh"
+/bin/cp "$ROOT/scripts/resolve-dev-flow-session-id.sh" "$TMP_ROOT/scripts/resolve-dev-flow-session-id.sh"
 
 cat > "$TMP_ROOT/bin/ok-probe" <<'EOF'
 #!/usr/bin/env bash
@@ -17,7 +18,16 @@ cat > "$TMP_ROOT/bin/fail-probe" <<'EOF'
 #!/usr/bin/env bash
 exit 1
 EOF
-/bin/chmod +x "$TMP_ROOT/bin/ok-probe" "$TMP_ROOT/bin/fail-probe"
+cat > "$TMP_ROOT/bin/app-launch-probe" <<'EOF'
+#!/usr/bin/env bash
+/usr/bin/python3 - "${DEV_FLOW_SESSION_ID}" <<'PY'
+import json, sys
+print(json.dumps({"producer":"XcodeBuildMCP","schema_version":1,"session_id":sys.argv[1],
+                  "status":"available","build_run_device":"success",
+                  "device_transport":"wired","app_launched":True}))
+PY
+EOF
+/bin/chmod +x "$TMP_ROOT/bin/ok-probe" "$TMP_ROOT/bin/fail-probe" "$TMP_ROOT/bin/app-launch-probe"
 
 run_for() {
   local session_id="$1"
@@ -29,6 +39,7 @@ run_health_for() {
   local session_id="$1"
   shift
   DEV_FLOW_SESSION_ID="$session_id" \
+    DEV_FLOW_APP_LAUNCH_HEALTH_CMD="$TMP_ROOT/bin/app-launch-probe" \
     DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD="$TMP_ROOT/bin/ok-probe" \
     DEV_FLOW_REVIEW_MCP_HEALTH_CMD="$TMP_ROOT/bin/ok-probe" \
     DEV_FLOW_FIGMA_REST_HEALTH_CMD="$TMP_ROOT/bin/ok-probe" \
@@ -70,6 +81,7 @@ run_for healthy approve-commit >/dev/null
 
 run_for blocked start --type bug --task "blocked task" >/dev/null
 if DEV_FLOW_SESSION_ID=blocked \
+  DEV_FLOW_APP_LAUNCH_HEALTH_CMD="$TMP_ROOT/bin/app-launch-probe" \
   DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD="$TMP_ROOT/bin/fail-probe" \
   DEV_FLOW_REVIEW_MCP_HEALTH_CMD="$TMP_ROOT/bin/ok-probe" \
   DEV_FLOW_FIGMA_REST_HEALTH_CMD="$TMP_ROOT/bin/ok-probe" \
@@ -82,6 +94,17 @@ if run_for blocked confirm-plan >/dev/null 2>&1; then
   exit 1
 fi
 
+run_for invalid-launch start --type ui_review --task "invalid launch evidence" >/dev/null
+if DEV_FLOW_SESSION_ID=invalid-launch \
+  DEV_FLOW_APP_LAUNCH_HEALTH_CMD=/usr/bin/true \
+  DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD="$TMP_ROOT/bin/ok-probe" \
+  DEV_FLOW_REVIEW_MCP_HEALTH_CMD="$TMP_ROOT/bin/ok-probe" \
+  DEV_FLOW_FIGMA_REST_HEALTH_CMD="$TMP_ROOT/bin/ok-probe" \
+  /bin/bash "$TMP_ROOT/scripts/environment-health-check.sh" run >/dev/null 2>&1; then
+  echo "FAIL: exit-code-only App launch probe was accepted" >&2
+  exit 1
+fi
+
 /usr/bin/python3 - "$TMP_ROOT/.dev-flow/sessions" <<'PY'
 import json
 import sys
@@ -91,6 +114,7 @@ root = Path(sys.argv[1])
 healthy = json.loads((root / "healthy.json").read_text())
 blocked = json.loads((root / "blocked.json").read_text())
 assert healthy["environment_health"]["status"] == "available"
+assert healthy["environment_health"]["checks"]["app_launch"]["status"] == "available"
 assert healthy["environment_health"]["checks"]["debugbridge"]["status"] == "available"
 assert healthy["confirmed_at"] is not None
 assert healthy["commit_approved_at"] is not None

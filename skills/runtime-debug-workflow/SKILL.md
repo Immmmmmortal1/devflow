@@ -66,7 +66,9 @@ visible UIWindow/UIView hierarchy, page/root identity, runtime anchor or accessi
 type, label/value, enabled state, visibility, frame, and interaction state.
 
 For scrollable screens also record the primary scroll owner, content/visible heights, and whether the
-target control is reachable. A screenshot may supplement the tree but cannot replace it.
+target control is reachable. A screenshot may supplement the tree for non-parity tasks but cannot
+replace it. When invoked by `ui-review`, screenshots are prohibited as evidence; use DebugBridge
+runtime nodes and hierarchy only.
 
 ### 4. Correlate current-run logs
 

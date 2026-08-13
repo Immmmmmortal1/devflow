@@ -1,4 +1,4 @@
 interface:
   display_name: "UI Review"
   short_description: "Figma parity review for existing iOS UI"
-  default_prompt: "Use $ui-review to compare an existing iOS screen with Figma, bind runtime elements, scan runtime extras, and report parity findings."
+  default_prompt: "Use $ui-review: split the whole page, live-compare every unit and runtime extra, freeze the baseline, obtain workspace authorization, repair one id at a time with wired-device DebugBridge verification, obtain human acceptance, run post-fix ui-parity-review, then record review/runtime/ui_parity gates before commit handoff."

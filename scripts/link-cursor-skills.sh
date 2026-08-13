@@ -5,12 +5,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=link-skills-common.sh
 source "$ROOT/scripts/link-skills-common.sh"
 
-if [[ -n "${CODEX_SKILLS_ROOT:-}" ]]; then
-  SKILLS_ROOT="$CODEX_SKILLS_ROOT"
-elif [[ -n "${CODEX_HOME:-}" ]]; then
-  SKILLS_ROOT="$CODEX_HOME/skills"
+if [[ -n "${CURSOR_SKILLS_ROOT:-}" ]]; then
+  SKILLS_ROOT="$CURSOR_SKILLS_ROOT"
 else
-  SKILLS_ROOT="$HOME/.codex/skills"
+  SKILLS_ROOT="$HOME/.cursor/skills"
 fi
 
 link_skills_devflow_package "$ROOT" "$SKILLS_ROOT"
