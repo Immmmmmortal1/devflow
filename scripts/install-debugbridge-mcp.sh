@@ -197,7 +197,7 @@ manifest = {
     "pod_status": "$POD_STATUS",
     "podfile": "$PODFILE_PATH",
     "pod_changed": "$POD_CHANGED" == "yes",
-    "swift_bootstrap_required": $SWIFT_BOOTSTRAP_REQUIRED,
+    "swift_bootstrap_required": "$SWIFT_BOOTSTRAP_REQUIRED" == "true",
     "swift_bootstrap_snippet": ".dev-flow/debugbridge-app-bootstrap.swift.snippet",
     "ai_next_steps": [],
 }

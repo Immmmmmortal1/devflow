@@ -5,9 +5,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from pathlib import Path
+
+from merge_mcp_codex_common import append_mcp_block, strip_mcp_server_sections
 
 
 def merge_cursor(config_path: Path, wrapper_path: str, pythonpath: str) -> bool:
@@ -51,21 +52,11 @@ def merge_codex(config_path: Path, wrapper_path: str, pythonpath: str) -> bool:
         return True
 
     text = config_path.read_text(encoding="utf-8")
-    pattern = re.compile(
-        r"\[mcp_servers\.orchestrator_mcp\][\s\S]*?(?=\n\[|\Z)",
-        re.MULTILINE,
-    )
-    if pattern.search(text):
-        updated = pattern.sub(block.rstrip() + "\n\n", text, count=1)
-        changed = updated != text
-        if changed:
-            config_path.write_text(updated, encoding="utf-8")
-        return changed
-
-    if not text.endswith("\n"):
-        text += "\n"
-    config_path.write_text(text + "\n" + block, encoding="utf-8")
-    return True
+    updated = append_mcp_block(strip_mcp_server_sections(text, "orchestrator_mcp"), block)
+    changed = updated != text
+    if changed:
+        config_path.write_text(updated, encoding="utf-8")
+    return changed
 
 
 def main() -> int:

@@ -36,6 +36,23 @@ bash "$ROOT/scripts/install-review-backend.sh" \
 [[ -f "$TMP_PROJECT/.dev-flow/review-backend.json" ]]
 /usr/bin/grep -q '"backend": "gstack"' "$TMP_PROJECT/.dev-flow/review-backend.json"
 
+LEGACY_SKILLS="$(/usr/bin/mktemp -d)"
+LEGACY_GSTACK="$(/usr/bin/mktemp -d)"
+trap '/bin/rm -rf -- "$TMP_SKILLS" "$TMP_PROJECT" "$TMP_MCP_CONFIG" "$TMP_ORCH" "$LEGACY_SKILLS" "$LEGACY_GSTACK"' EXIT
+
+mkdir -p "$LEGACY_SKILLS/gstack" "$LEGACY_GSTACK/review"
+printf '%s\n' '# review' > "$LEGACY_GSTACK/review/SKILL.md"
+export GSTACK_REPO_ROOT="$LEGACY_GSTACK"
+
+bash "$ROOT/scripts/install-review-backend.sh" \
+  --codex \
+  --skills-root "$LEGACY_SKILLS" \
+  --review-backend gstack \
+  --skip-mcp-config >/dev/null
+
+[[ -L "$LEGACY_SKILLS/gstack/review/SKILL.md" ]]
+[[ "$(readlink "$LEGACY_SKILLS/gstack/review/SKILL.md")" == "$LEGACY_GSTACK/review/SKILL.md" ]]
+
 python3 "$ROOT/scripts/lib/merge-orchestrator-mcp-config.py" \
   --platform cursor \
   --wrapper-path "$TMP_ORCH/codex-stdio-wrapper.sh" \

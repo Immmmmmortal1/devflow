@@ -39,6 +39,33 @@ gstack_review_installed() {
   [[ -f "$root/gstack/review/SKILL.md" ]]
 }
 
+find_gstack_review_source() {
+  local gstack_root="$1"
+  local candidate=""
+  for candidate in \
+    "$gstack_root/review/SKILL.md" \
+    "${GSTACK_REPO_ROOT:-}/review/SKILL.md" \
+    "$HOME/.gstack/repos/gstack/review/SKILL.md"; do
+    if [[ -n "$candidate" && -f "$candidate" ]]; then
+      printf '%s\n' "$(cd "$(dirname "$candidate")" && pwd)/SKILL.md"
+      return 0
+    fi
+  done
+  return 1
+}
+
+link_gstack_review_skill() {
+  local source="$1"
+  local dest="$SKILLS_ROOT/gstack/review/SKILL.md"
+  mkdir -p "$(dirname "$dest")"
+  if [[ -e "$dest" && ! -L "$dest" ]]; then
+    echo "ERROR: $dest exists and is not a symlink" >&2
+    exit 1
+  fi
+  ln -sf "$source" "$dest"
+  echo "Linked gstack-review: $dest -> $source"
+}
+
 orchestrator_installed() {
   local orch_root="$1"
   [[ -x "$orch_root/codex-stdio-wrapper.sh" && -x "$orch_root/.venv/bin/python" ]]
@@ -140,7 +167,19 @@ install_gstack_review() {
 
   echo "Installing gstack-review under $SKILLS_ROOT/gstack"
   mkdir -p "$SKILLS_ROOT"
+
+  local review_source=""
+  if review_source="$(find_gstack_review_source "$gstack_root")"; then
+    link_gstack_review_skill "$review_source"
+    return 0
+  fi
+
   if [[ ! -d "$gstack_root/.git" ]]; then
+    if [[ -e "$gstack_root" ]]; then
+      echo "NOTE: $gstack_root exists without review/SKILL.md; cloning gstack alongside it is skipped." >&2
+      echo "ERROR: could not locate gstack review/SKILL.md (checked ~/.gstack/repos/gstack and $gstack_root)" >&2
+      exit 1
+    fi
     git clone --single-branch --depth 1 "$GSTACK_REPO" "$gstack_root"
   fi
 
