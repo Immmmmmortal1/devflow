@@ -124,12 +124,23 @@ Cursor 内禁止回退到共享 `local` session（见 `scripts/resolve-dev-flow-
 ## 安装到本机 skills
 
 ```bash
-# Codex
-bash scripts/link-global-skills.sh
+# 1. 克隆 devflow 后，链 skills（Codex / Cursor）
+bash scripts/link-global-skills.sh   # Codex → ~/.codex/skills
+bash scripts/link-cursor-skills.sh   # Cursor → ~/.cursor/skills
 
-# Cursor
-bash scripts/link-cursor-skills.sh
+# 2. 每个 iOS 工程还要链 gate 脚本（否则仍是旧版 scripts/，会出现 probe_not_configured）
+bash scripts/link-project-scripts.sh /path/to/YourApp
+
+# 3. 在工程根目录自检
+bash scripts/dev-flow-doctor.sh
 ```
+
+**常见报错：** `app_launch_probe_not_configured` / `review_mcp: probe_not_configured` 表示目标工程
+里的 `scripts/environment-health-check.sh` 仍是旧版，未包含 `read-app-launch-report.sh` 与
+`review-health-probe.sh`。执行 `git pull` 更新 devflow 后重新运行 `link-project-scripts.sh`。
+
+环境检查前还需：`build_run_device` → `bash scripts/record-app-launch-report.sh record`。
+Figma token 可用 `FIGMA_REST_TOKEN` 或 `FIGMA_ACCESS_TOKEN`。
 
 ## 目录结构
 

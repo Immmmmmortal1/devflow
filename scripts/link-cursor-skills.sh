@@ -16,3 +16,4 @@ linked_count="$(link_skills_tree "$ROOT" "$SKILLS_ROOT")"
 
 echo "Linked dev-flow package and ${linked_count} skills under $SKILLS_ROOT"
 echo "Source of truth: $ROOT"
+echo "Also run link-project-scripts.sh for each iOS app repo (skills alone do not update app scripts/)."

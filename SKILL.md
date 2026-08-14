@@ -107,8 +107,19 @@ change the selected route.
 Run the executable check for the current session:
 
 ```bash
+bash scripts/dev-flow-doctor.sh
 bash scripts/environment-health-check.sh run
 ```
+
+Before the health check, complete the physical-device launch preflight and record it:
+
+```bash
+bash scripts/record-app-launch-report.sh record
+```
+
+The doctor command fails fast when the target project's `scripts/` tree is stale. Skills install
+via `link-global-skills.sh` / `link-cursor-skills.sh` does not update app-repo scripts; run
+`link-project-scripts.sh <app-root>` after every devflow upgrade.
 
 The command writes the four results into `.dev-flow/sessions/<session-id>.json`. It exits non-zero
 when any capability is unavailable.

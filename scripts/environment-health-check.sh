@@ -8,6 +8,7 @@ SESSION_ID="$(resolve_dev_flow_session_id)" || exit $?
 STATE_DIR="$ROOT/.dev-flow/sessions"
 STATE_FILE="$STATE_DIR/$SESSION_ID.json"
 FIGMA_SKILL_ROOT="${FIGMA_REST_API_SKILL_ROOT:-$HOME/.codex/skills/figma-rest-api}"
+FIGMA_REST_TOKEN="${FIGMA_REST_TOKEN:-${FIGMA_ACCESS_TOKEN:-}}"
 
 usage() {
   cat <<'EOF'
@@ -23,8 +24,8 @@ adapter JSON must include producer=XcodeBuildMCP, schema_version=1, the current 
 status=available, build_run_device=success, device_transport=wired, and app_launched=true. Other
 probes use DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD and DEV_FLOW_REVIEW_MCP_HEALTH_CMD. Review MCP health
 defaults to scripts/review-health-probe.sh, which falls back to gstack-review when orchestrator MCP
-is unavailable. Figma REST uses the installed skill and FIGMA_REST_TOKEN unless
-DEV_FLOW_FIGMA_REST_HEALTH_CMD is set.
+is unavailable. Figma REST uses the installed skill and FIGMA_REST_TOKEN (FIGMA_ACCESS_TOKEN is
+accepted as an alias) unless DEV_FLOW_FIGMA_REST_HEALTH_CMD is set.
 
 Session selection matches scripts/resolve-dev-flow-session-id.sh:
   DEV_FLOW_SESSION_ID, then CODEX_THREAD_ID, then CURSOR_CONVERSATION_ID.
