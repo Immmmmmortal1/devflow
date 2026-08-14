@@ -12,18 +12,29 @@ git pull
 bash scripts/install-dev-flow.sh --project /path/to/YourApp
 ```
 
+安装器会同时完成：
+
+1. **dev-flow skills** → 链到 `~/.cursor/skills` 或 `~/.codex/skills`
+2. **[UI-dbugbridge-mcp](https://github.com/Immmmmmortal1/UI-dbugbridge-mcp)** → Mac 侧 DebugBridge MCP（克隆/更新、`npm run build`、写入 Cursor/Codex MCP 配置）
+3. **App 绑定** → 仅写 `<app>/.dev-flow/`（含 `debugbridge-install.json`、Pod 引导 manifest）
+4. **LookDebugBridge Pod**（有 Podfile 时）→ 自动写入 Debug-only pod 行；**AI 仍需** `pod install` 并在 Debug 启动代码里加入 bootstrap snippet
+
 - `--project`：iOS App 工程根目录（含 `.xcodeproj` / `.xcworkspace` 的那一层）
 - 在 Cursor 里通常可写：`bash scripts/install-dev-flow.sh --project .`（当前 workspace 就是 App 时）
 - 只装 skills、暂不绑 App：`bash scripts/install-dev-flow.sh --skills-only`
+- 跳过 DebugBridge MCP：`--skip-debugbridge`
+- 自动跑 `pod install`：`--run-pod-install`（需本机已装 CocoaPods）
 - 强制平台：`--cursor` 或 `--codex`（默认自动检测）
 
 **AI agent 安装规则：**
 
 1. 先 `git pull` devflow，再跑 `install-dev-flow.sh`，不要手抄 gate 脚本到 App 仓
-2. App 仓只会多出 `.dev-flow/`（会话状态 + `source-root` 绑定）
-3. 装完后在 App 根目录跑：`bash /path/to/devflow/scripts/dev-flow.sh doctor`
-4. 环境门禁前：`build_run_device` → `dev-flow.sh record-app-launch record` → `dev-flow.sh environment-health run`
-5. Figma token 用 `FIGMA_REST_TOKEN` 或 `FIGMA_ACCESS_TOKEN`
+2. App 仓只会多出 `.dev-flow/`（会话状态 + `source-root` + DebugBridge manifest）
+3. 若 `.dev-flow/debugbridge-install.json` 显示 `pod_changed: true`：在 App 仓执行 `pod install`，并把 `.dev-flow/debugbridge-app-bootstrap.swift.snippet` 加到 Debug 启动路径（如 `AppDelegate` / `@main` App）
+4. 重启 Cursor/Codex MCP，使 `ui_dbugbridge_mcp` 生效
+5. 装完后在 App 根目录跑：`bash /path/to/devflow/scripts/dev-flow.sh doctor`
+6. 环境门禁前：`build_run_device`（有线真机）→ `dev-flow.sh record-app-launch record` → `dev-flow.sh environment-health run`
+7. Figma token 用 `FIGMA_REST_TOKEN` 或 `FIGMA_ACCESS_TOKEN`
 
 安装完成后日常命令（在 App 根目录）：
 

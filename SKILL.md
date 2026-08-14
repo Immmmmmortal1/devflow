@@ -40,7 +40,9 @@ bash scripts/install-dev-flow.sh --project <ios-app-root>
 ```
 
 - Gate scripts stay in the devflow clone only; never copy them into the app repo
-- The app repo gets only `.dev-flow/` session state
+- The app repo gets only `.dev-flow/` session state plus DebugBridge install manifest
+- Installs [UI-dbugbridge-mcp](https://github.com/Immmmmmortal1/UI-dbugbridge-mcp): Mac MCP server + LookDebugBridge Pod wiring when a Podfile exists
+- After install, if `pod_changed` in `.dev-flow/debugbridge-install.json`: run `pod install`, add Debug bootstrap from `.dev-flow/debugbridge-app-bootstrap.swift.snippet`, restart MCP host
 - Verify with: `bash <devflow-root>/scripts/dev-flow.sh doctor` from the app root
 
 

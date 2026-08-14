@@ -8,18 +8,22 @@ source "$ROOT/scripts/link-skills-common.sh"
 PLATFORM=""
 PROJECT_ROOT=""
 SKILLS_ONLY=0
+SKIP_DEBUGBRIDGE=0
+RUN_POD_INSTALL=0
+DEBUGBRIDGE_MCP_ROOT=""
 
 usage() {
   cat <<EOF
 Usage:
-  bash scripts/install-dev-flow.sh [--cursor | --codex] [--project <app-root>] [--skills-only]
+  bash scripts/install-dev-flow.sh [--cursor | --codex] [--project <app-root>] [--skills-only] [--skip-debugbridge] [--run-pod-install] [--debugbridge-mcp-root <path>]
 
 One-shot dev-flow installer for humans and AI agents.
 
 What it does:
   1. Symlink dev-flow skills into the local Codex or Cursor skills directory
-  2. Optionally bind an iOS app repo (creates only <app>/.dev-flow/, no scripts/ copy)
-  3. Run dev-flow doctor when --project is provided
+  2. Install UI-dbugbridge-mcp (Mac MCP + optional iOS LookDebugBridge Pod wiring)
+  3. Optionally bind an iOS app repo (creates only <app>/.dev-flow/, no scripts/ copy)
+  4. Run dev-flow doctor when --project is provided
 
 Examples:
   bash scripts/install-dev-flow.sh --project ~/iOSworkspace/KakaPic
@@ -31,6 +35,7 @@ AI agents:
   - Pass --project as the iOS app workspace root (where .xcodeproj / .xcworkspace lives)
   - Do NOT copy gate scripts into the app repo; gate scripts stay in this devflow clone
   - After install, run gates via: bash "$ROOT/scripts/dev-flow.sh" ...
+  - When Podfile changed: run pod install and add Debug bootstrap from .dev-flow/debugbridge-app-bootstrap.swift.snippet
 EOF
 }
 
@@ -51,6 +56,18 @@ while [[ $# -gt 0 ]]; do
     --skills-only)
       SKILLS_ONLY=1
       shift
+      ;;
+    --skip-debugbridge)
+      SKIP_DEBUGBRIDGE=1
+      shift
+      ;;
+    --run-pod-install)
+      RUN_POD_INSTALL=1
+      shift
+      ;;
+    --debugbridge-mcp-root)
+      DEBUGBRIDGE_MCP_ROOT="${2:-}"
+      shift 2
       ;;
     -h|--help)
       usage
@@ -96,6 +113,20 @@ echo "Platform:      $PLATFORM"
 echo "Skills linked: $linked_count under $SKILLS_ROOT"
 echo "Source root:   $ROOT"
 
+if [[ "$SKIP_DEBUGBRIDGE" -eq 0 ]]; then
+  debugbridge_args=(--"$PLATFORM")
+  if [[ -n "$DEBUGBRIDGE_MCP_ROOT" ]]; then
+    debugbridge_args+=(--mcp-root "$DEBUGBRIDGE_MCP_ROOT")
+  fi
+  if [[ -n "$PROJECT_ROOT" ]]; then
+    debugbridge_args+=(--project "$PROJECT_ROOT")
+  fi
+  if [[ "$RUN_POD_INSTALL" -eq 1 ]]; then
+    debugbridge_args+=(--run-pod-install)
+  fi
+  bash "$ROOT/scripts/install-debugbridge-mcp.sh" "${debugbridge_args[@]}"
+fi
+
 if [[ "$SKILLS_ONLY" -eq 1 ]]; then
   echo
   echo "Skills-only install complete."
@@ -106,7 +137,7 @@ fi
 
 if [[ -z "$PROJECT_ROOT" ]]; then
   echo
-  echo "Skills install complete. No app project bound."
+  echo "Skills + DebugBridge MCP install complete. No app project bound."
   echo "Next, bind your iOS app repo:"
   echo "  bash \"$ROOT/scripts/install-dev-flow.sh\" --project /path/to/YourApp"
   exit 0
@@ -130,6 +161,11 @@ Daily commands (run from the app repo):
   # after XcodeBuildMCP build_run_device succeeds:
   bash "$ROOT/scripts/dev-flow.sh" record-app-launch record
   bash "$ROOT/scripts/dev-flow.sh" environment-health run
+
+DebugBridge:
+  - MCP repo path recorded in .dev-flow/debugbridge-mcp-root
+  - Pod/bootstrap manifest: .dev-flow/debugbridge-install.json
+  - If pod changed: pod install + add .dev-flow/debugbridge-app-bootstrap.swift.snippet in Debug launch
 
 Figma token: set FIGMA_REST_TOKEN or FIGMA_ACCESS_TOKEN in the environment.
 EOF

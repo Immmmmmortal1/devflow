@@ -35,6 +35,7 @@ required=(
   DEV_FLOW_SCRIPTS_VERSION
   dev-flow.sh
   dev-flow-init-project.sh
+  install-debugbridge-mcp.sh
   resolve-dev-flow-session-id.sh
   dev-flow-session.sh
   environment-health-check.sh
@@ -83,6 +84,35 @@ if ! /usr/bin/grep -q 'read-app-launch-report.sh' "$DEV_FLOW_SCRIPTS_DIR/environ
   echo "Stale dev-flow source: environment-health-check.sh is too old." >&2
   echo "Fix: git pull your devflow clone." >&2
   exit 1
+fi
+
+debugbridge_root=""
+if [[ -f "$DEV_FLOW_PROJECT_ROOT/.dev-flow/debugbridge-mcp-root" ]]; then
+  debugbridge_root="$(tr -d '[:space:]' < "$DEV_FLOW_PROJECT_ROOT/.dev-flow/debugbridge-mcp-root")"
+fi
+
+if [[ -n "$debugbridge_root" ]]; then
+  if [[ ! -f "$debugbridge_root/src/server.js" ]]; then
+    echo "WARNING: DebugBridge MCP root is bound but server.js is missing:" >&2
+    echo "  $debugbridge_root" >&2
+    echo "Fix: bash \"$DEV_FLOW_SOURCE_ROOT/scripts/install-debugbridge-mcp.sh\" --project \"$DEV_FLOW_PROJECT_ROOT\"" >&2
+    exit 1
+  fi
+  if [[ -f "$DEV_FLOW_PROJECT_ROOT/.dev-flow/debugbridge-install.json" ]]; then
+    bootstrap_required="$(DEV_FLOW_INSTALL_JSON="$DEV_FLOW_PROJECT_ROOT/.dev-flow/debugbridge-install.json" python3 - <<'PY'
+import json
+import os
+payload = json.load(open(os.environ["DEV_FLOW_INSTALL_JSON"], encoding="utf-8"))
+print("yes" if payload.get("swift_bootstrap_required") else "no")
+PY
+)"
+    if [[ "$bootstrap_required" == "yes" ]]; then
+      echo "NOTE: LookDebugBridge Pod was added; AI/human must still run pod install and add Swift bootstrap." >&2
+    fi
+  fi
+  echo "DebugBridge MCP: $debugbridge_root"
+else
+  echo "NOTE: DebugBridge MCP not bound for this app. Run install-dev-flow.sh or install-debugbridge-mcp.sh --project ..." >&2
 fi
 
 echo "PASS: central dev-flow source is current; app project binding is ready."
