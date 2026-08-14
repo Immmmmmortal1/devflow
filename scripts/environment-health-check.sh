@@ -15,13 +15,14 @@ Usage:
   scripts/environment-health-check.sh run
 
 The command records the report in the current dev-flow session. The caller must first run the
-registered XcodeBuildMCP physical-device launch preflight, then supply its bounded adapter through
-DEV_FLOW_APP_LAUNCH_HEALTH_CMD. The adapter must print one JSON object with
-producer=XcodeBuildMCP, schema_version=1, the current session_id, status=available,
-build_run_device=success, device_transport=wired, and app_launched=true. Other probes use
-DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD and
-DEV_FLOW_REVIEW_MCP_HEALTH_CMD. Figma REST uses the installed skill and FIGMA_REST_TOKEN unless
-DEV_FLOW_FIGMA_REST_HEALTH_CMD is set.
+registered XcodeBuildMCP physical-device launch preflight, then record the bounded result with
+scripts/record-app-launch-report.sh record. By default the App launch probe reads
+.dev-flow/sessions/<session-id>.app-launch.json through scripts/read-app-launch-report.sh.
+Override with DEV_FLOW_APP_LAUNCH_HEALTH_CMD when a custom adapter is required. The stored or
+adapter JSON must include producer=XcodeBuildMCP, schema_version=1, the current session_id,
+status=available, build_run_device=success, device_transport=wired, and app_launched=true. Other
+probes use DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD and DEV_FLOW_REVIEW_MCP_HEALTH_CMD. Figma REST uses the
+installed skill and FIGMA_REST_TOKEN unless DEV_FLOW_FIGMA_REST_HEALTH_CMD is set.
 
 Session selection matches scripts/resolve-dev-flow-session-id.sh:
   DEV_FLOW_SESSION_ID, then CODEX_THREAD_ID, then CURSOR_CONVERSATION_ID.
@@ -130,7 +131,12 @@ if [[ -z "$debug_command" ]]; then
   debug_command="/usr/bin/curl -fsS --max-time 3 '${debug_url%/}/ping' >/dev/null"
 fi
 
-app_launch_result="$(run_app_launch_probe "${DEV_FLOW_APP_LAUNCH_HEALTH_CMD:-}")"
+app_launch_command="${DEV_FLOW_APP_LAUNCH_HEALTH_CMD:-}"
+if [[ -z "$app_launch_command" ]]; then
+  app_launch_command="'$ROOT/scripts/read-app-launch-report.sh'"
+fi
+
+app_launch_result="$(run_app_launch_probe "$app_launch_command")"
 app_launch_status="$(/usr/bin/python3 - "$app_launch_result" <<'PY'
 import json, sys
 print(json.loads(sys.argv[1])["status"])

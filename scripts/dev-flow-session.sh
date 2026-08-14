@@ -680,6 +680,7 @@ case "$cmd" in
       echo "start requires --type bug|feature|ui_review" >&2
       exit 2
     fi
+    rm -f "$STATE_DIR/$SESSION_ID.app-launch.json"
     write_state "start" "$SESSION_TYPE" "$TASK" "review"
     ;;
   configure-gates)

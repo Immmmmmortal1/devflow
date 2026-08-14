@@ -26,17 +26,28 @@ physical-device preflight.
 Before calling any DebugBridge health tool, launch the current App on a physical device through the
 registered XcodeBuildMCP tools in this exact order:
 
-1. Call `session_show_defaults` and confirm the project/workspace, scheme, configuration, and
+1. Isolate XcodeBuildMCP defaults with `session_set_defaults` `profile` = current session id
+   (`DEV_FLOW_SESSION_ID`, then `CODEX_THREAD_ID`, then `CURSOR_CONVERSATION_ID`; never `local`
+   inside Cursor) and `createIfNotExists: true` for this worktree. Then call
+   `session_show_defaults` and confirm the project/workspace, scheme, configuration, and
    physical device. Do not assume defaults or use a simulator.
 2. Call `build_run_device` to build, install, and launch the current App. Pass the current
    `DEV_FLOW_SESSION_ID` to the launched App when the project supports it.
-3. Only after a successful build, install, and launch may the DebugBridge check call
+3. Record the bounded launch result for the current session:
+
+```bash
+bash scripts/record-app-launch-report.sh record
+```
+
+Use `--report <path>` only when importing an already bounded XcodeBuildMCP JSON payload.
+4. Only after a successful build, install, launch, and record step may the DebugBridge check call
    `ensure_ports`, then `ping`.
 
-Write the bounded tool result through the configured App-launch probe adapter. Its stdout JSON must
+The default App launch probe reads `.dev-flow/sessions/<session-id>.app-launch.json`. Its JSON must
 identify `producer: XcodeBuildMCP`, schema version 1, current session id,
 `build_run_device: success`, `device_transport: wired`, and `app_launched: true`. Exit code alone
-or `/usr/bin/true` is not valid launch evidence.
+or `/usr/bin/true` is not valid launch evidence. Override with `DEV_FLOW_APP_LAUNCH_HEALTH_CMD`
+only when a custom adapter is required.
 
 If `session_show_defaults` is missing or wrong, or `build_run_device` fails at build, signing,
 installation, launch, or device connectivity, report the DebugBridge capability as `blocked` with
@@ -54,9 +65,11 @@ bash scripts/environment-health-check.sh run
 The script records the report in the current `.dev-flow/sessions/<session-id>.json` and exits
 non-zero when any check is `blocked` or `not-run`. Use `DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD` and
 `DEV_FLOW_REVIEW_MCP_HEALTH_CMD` when the registered service requires a local probe adapter. The
-script can use a sibling `orchestrator-mcp/scripts/orchestrator-doctor.sh` when present; do not
-replace a failed probe with a hand-written `available` result. `dev-flow-session.sh` rejects
-`confirm-plan` and `approve-commit` until the recorded status is `available`.
+App launch probe defaults to `scripts/read-app-launch-report.sh` after
+`scripts/record-app-launch-report.sh record`. The script can use a sibling
+`orchestrator-mcp/scripts/orchestrator-doctor.sh` when present; do not replace a failed probe with
+a hand-written `available` result. `dev-flow-session.sh` rejects `confirm-plan` and
+`approve-commit` until the recorded status is `available`.
 
 ### 1. DebugBridge
 

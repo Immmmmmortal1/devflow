@@ -18,7 +18,7 @@ meaning, UI parity, code review, or commit approval.
 
 Use the registered tools in this order:
 
-1. XcodeBuildMCP `session_show_defaults`, then `build_run_device`.
+1. XcodeBuildMCP named profile = current session id (`DEV_FLOW_SESSION_ID`, then `CODEX_THREAD_ID`, then `CURSOR_CONVERSATION_ID`), then `session_show_defaults`, then `build_run_device`.
 2. DebugBridge `get_debug_page` and UI actions such as `tap_element`.
 3. DebugBridge `inspect_ui` for the current App UIWindow/UIView tree.
 4. DebugBridge `read_app_logs` for the complete current-run in-memory log pool, or
@@ -33,9 +33,12 @@ files for a real-device claim.
 
 ### 1. Establish the physical runtime
 
-Call `session_show_defaults` before the first build or run. Confirm the project/workspace, scheme,
-configuration, and physical device. Then call `build_run_device`. Pass the current
-`DEV_FLOW_SESSION_ID` into the launched App when the project supports it.
+Resolve the current session id (`DEV_FLOW_SESSION_ID`, then `CODEX_THREAD_ID`, then
+`CURSOR_CONVERSATION_ID`; never `local` inside Cursor). Call `session_set_defaults` with
+`profile` set to that id and `createIfNotExists: true` for this worktree, then
+`session_show_defaults`. Confirm the project/workspace, scheme, configuration, and physical
+device belong to this repo, not a sibling worktree. Then call `build_run_device`. Do not put
+the session id into the launched App `env` map unless a separate contract requires it.
 
 Record:
 
