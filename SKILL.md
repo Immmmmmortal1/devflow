@@ -40,10 +40,12 @@ bash scripts/install-dev-flow.sh --project <ios-app-root>
 ```
 
 - Gate scripts stay in the devflow clone only; never copy them into the app repo
-- The app repo gets only `.dev-flow/` session state plus DebugBridge install manifest
+- The app repo gets only `.dev-flow/` session state plus XcodeBuild / DebugBridge install manifests
+- Installs [XcodeBuildMCP](https://github.com/getsentry/XcodeBuildMCP): merges MCP config with `device`, `session-management`, and `project-discovery` workflows; writes `<app>/.xcodebuildmcp/config.yaml`
 - Installs [UI-dbugbridge-mcp](https://github.com/Immmmmmortal1/UI-dbugbridge-mcp): Mac MCP server + LookDebugBridge Pod wiring when a Podfile exists
 - Prompts for review backend: [orchestrator-mcp](https://github.com/Immmmmmortal1/orchestrator-mcp) or gstack-review; use `--review-backend orchestrator|gstack` non-interactively
-- After install, if `pod_changed` in `.dev-flow/debugbridge-install.json`: run `pod install`, add Debug bootstrap from `.dev-flow/debugbridge-app-bootstrap.swift.snippet`, restart MCP host
+- After install, restart MCP host so `XcodeBuildMCP`, `ui_dbugbridge_mcp`, and optional `orchestrator_mcp` reload
+- After install, if `pod_changed` in `.dev-flow/debugbridge-install.json`: run `pod install`, add Debug bootstrap from `.dev-flow/debugbridge-app-bootstrap.swift.snippet`
 - Verify with: `bash <devflow-root>/scripts/dev-flow.sh doctor` from the app root
 
 

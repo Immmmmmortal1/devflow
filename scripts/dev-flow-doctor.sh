@@ -36,6 +36,7 @@ required=(
   dev-flow.sh
   dev-flow-init-project.sh
   install-debugbridge-mcp.sh
+  install-xcodebuild-mcp.sh
   install-review-backend.sh
   resolve-dev-flow-session-id.sh
   dev-flow-session.sh
@@ -135,6 +136,38 @@ PY
   fi
 else
   echo "NOTE: review backend manifest missing. Run install-dev-flow.sh to choose orchestrator-mcp or gstack-review." >&2
+fi
+
+LIB="$DEV_FLOW_SCRIPTS_DIR/lib"
+xcodebuild_bound=0
+if [[ -f "$DEV_FLOW_PROJECT_ROOT/.dev-flow/xcodebuild-mcp-install.json" ]]; then
+  xcodebuild_bound=1
+fi
+
+xcodebuild_verify="$(
+  python3 "$LIB/verify-xcodebuild-mcp-config.py" --platform auto --project-root "$DEV_FLOW_PROJECT_ROOT" 2>/dev/null || true
+)"
+xcodebuild_status="$(printf '%s\n' "$xcodebuild_verify" | sed -n 's/^status=//p' | head -n1)"
+xcodebuild_workflows="$(printf '%s\n' "$xcodebuild_verify" | sed -n 's/^workflows=//p' | head -n1)"
+
+if [[ "$xcodebuild_status" == "ok" ]]; then
+  echo "XcodeBuildMCP: configured (${xcodebuild_workflows:-workflows present})"
+elif [[ "$xcodebuild_bound" -eq 1 ]]; then
+  echo "WARNING: XcodeBuildMCP install manifest exists but MCP client config is missing or incomplete." >&2
+  printf '%s\n' "$xcodebuild_verify" | sed -n 's/^detail=//p' >&2 || true
+  echo "Fix: bash \"$DEV_FLOW_SOURCE_ROOT/scripts/install-xcodebuild-mcp.sh\" --project \"$DEV_FLOW_PROJECT_ROOT\"" >&2
+  exit 1
+else
+  echo "NOTE: XcodeBuildMCP not verified. Run install-dev-flow.sh or install-xcodebuild-mcp.sh --project ..." >&2
+fi
+
+if [[ "$xcodebuild_bound" -eq 1 ]]; then
+  if [[ ! -f "$DEV_FLOW_PROJECT_ROOT/.xcodebuildmcp/config.yaml" ]]; then
+    echo "WARNING: xcodebuild install manifest exists but .xcodebuildmcp/config.yaml is missing." >&2
+    echo "Fix: bash \"$DEV_FLOW_SOURCE_ROOT/scripts/install-xcodebuild-mcp.sh\" --project \"$DEV_FLOW_PROJECT_ROOT\"" >&2
+    exit 1
+  fi
+  echo "XcodeBuild project config: $DEV_FLOW_PROJECT_ROOT/.xcodebuildmcp/config.yaml"
 fi
 
 echo "PASS: central dev-flow source is current; app project binding is ready."

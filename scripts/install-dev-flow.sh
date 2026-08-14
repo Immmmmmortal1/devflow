@@ -9,6 +9,7 @@ PLATFORM=""
 PROJECT_ROOT=""
 SKILLS_ONLY=0
 SKIP_DEBUGBRIDGE=0
+SKIP_XCODEBUILD=0
 SKIP_REVIEW=0
 RUN_POD_INSTALL=0
 DEBUGBRIDGE_MCP_ROOT=""
@@ -18,16 +19,17 @@ ORCHESTRATOR_ROOT=""
 usage() {
   cat <<EOF
 Usage:
-  bash scripts/install-dev-flow.sh [--cursor | --codex] [--project <app-root>] [--skills-only] [--skip-debugbridge] [--skip-review] [--run-pod-install] [--debugbridge-mcp-root <path>] [--review-backend orchestrator|gstack] [--orchestrator-root <path>]
+  bash scripts/install-dev-flow.sh [--cursor | --codex] [--project <app-root>] [--skills-only] [--skip-xcodebuild] [--skip-debugbridge] [--skip-review] [--run-pod-install] [--debugbridge-mcp-root <path>] [--review-backend orchestrator|gstack] [--orchestrator-root <path>]
 
 One-shot dev-flow installer for humans and AI agents.
 
 What it does:
   1. Symlink dev-flow skills into the local Codex or Cursor skills directory
   2. Prompt for review backend: orchestrator-mcp or gstack-review (or pass --review-backend)
-  3. Install UI-dbugbridge-mcp (Mac MCP + optional iOS LookDebugBridge Pod wiring)
-  4. Optionally bind an iOS app repo (creates only <app>/.dev-flow/, no scripts/ copy)
-  5. Run dev-flow doctor when --project is provided
+  3. Install XcodeBuildMCP (device + session-management + project-discovery workflows)
+  4. Install UI-dbugbridge-mcp (Mac MCP + optional iOS LookDebugBridge Pod wiring)
+  5. Optionally bind an iOS app repo (creates only <app>/.dev-flow/, no scripts/ copy)
+  6. Run dev-flow doctor when --project is provided
 
 Examples:
   bash scripts/install-dev-flow.sh --project ~/iOSworkspace/KakaPic
@@ -63,6 +65,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-debugbridge)
       SKIP_DEBUGBRIDGE=1
+      shift
+      ;;
+    --skip-xcodebuild)
+      SKIP_XCODEBUILD=1
       shift
       ;;
     --skip-review)
@@ -143,6 +149,14 @@ if [[ "$SKIP_REVIEW" -eq 0 ]]; then
   bash "$ROOT/scripts/install-review-backend.sh" "${review_args[@]}"
 fi
 
+if [[ "$SKIP_XCODEBUILD" -eq 0 ]]; then
+  xcodebuild_args=(--"$PLATFORM")
+  if [[ -n "$PROJECT_ROOT" ]]; then
+    xcodebuild_args+=(--project "$PROJECT_ROOT")
+  fi
+  bash "$ROOT/scripts/install-xcodebuild-mcp.sh" "${xcodebuild_args[@]}"
+fi
+
 if [[ "$SKIP_DEBUGBRIDGE" -eq 0 ]]; then
   debugbridge_args=(--"$PLATFORM")
   if [[ -n "$DEBUGBRIDGE_MCP_ROOT" ]]; then
@@ -200,6 +214,11 @@ DebugBridge:
 Review backend:
   - Manifest: .dev-flow/review-backend.json
   - orchestrator-mcp path (if chosen): .dev-flow/orchestrator-mcp-root
+
+XcodeBuildMCP:
+  - Manifest: .dev-flow/xcodebuild-mcp-install.json
+  - Project config: .xcodebuildmcp/config.yaml
+  - Restart MCP host, then session_set_defaults + build_run_device on wired device
 
 Figma token: set FIGMA_REST_TOKEN or FIGMA_ACCESS_TOKEN in the environment.
 EOF

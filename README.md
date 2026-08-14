@@ -15,16 +15,18 @@ bash scripts/install-dev-flow.sh --project /path/to/YourApp
 安装器会同时完成：
 
 1. **dev-flow skills** → 链到 `~/.cursor/skills` 或 `~/.codex/skills`
-2. **[UI-dbugbridge-mcp](https://github.com/Immmmmmortal1/UI-dbugbridge-mcp)** → Mac 侧 DebugBridge MCP（克隆/更新、`npm run build`、写入 Cursor/Codex MCP 配置）
-3. **Review 后端（交互选择）** → `orchestrator-mcp` 或 `gstack-review`
+2. **[XcodeBuildMCP](https://github.com/getsentry/XcodeBuildMCP)** → 写入 Cursor/Codex MCP 配置，启用 `device` / `session-management` / `project-discovery`；有 `--project` 时还会写 `<app>/.xcodebuildmcp/config.yaml`
+3. **[UI-dbugbridge-mcp](https://github.com/Immmmmmortal1/UI-dbugbridge-mcp)** → Mac 侧 DebugBridge MCP（克隆/更新、`npm run build`、写入 Cursor/Codex MCP 配置）
+4. **Review 后端（交互选择）** → `orchestrator-mcp` 或 `gstack-review`
    - **orchestrator-mcp**：[`Immmmmmortal1/orchestrator-mcp`](https://github.com/Immmmmmortal1/orchestrator-mcp)（独立 Review Hub MCP，需配置 API Key）
    - **gstack-review**：未安装时自动 shallow clone gstack 的 `/review` skill（非交互默认项）
-4. **App 绑定** → 仅写 `<app>/.dev-flow/`（含 `debugbridge-install.json`、`review-backend.json`、Pod 引导 manifest）
-5. **LookDebugBridge Pod**（有 Podfile 时）→ 自动写入 Debug-only pod 行；**AI 仍需** `pod install` 并在 Debug 启动代码里加入 bootstrap snippet
+5. **App 绑定** → 仅写 `<app>/.dev-flow/`（含 `xcodebuild-mcp-install.json`、`debugbridge-install.json`、`review-backend.json`、Pod 引导 manifest）
+6. **LookDebugBridge Pod**（有 Podfile 时）→ 自动写入 Debug-only pod 行；**AI 仍需** `pod install` 并在 Debug 启动代码里加入 bootstrap snippet
 
 - `--project`：iOS App 工程根目录（含 `.xcodeproj` / `.xcworkspace` 的那一层）
 - 在 Cursor 里通常可写：`bash scripts/install-dev-flow.sh --project .`（当前 workspace 就是 App 时）
 - 只装 skills、暂不绑 App：`bash scripts/install-dev-flow.sh --skills-only`
+- 跳过 XcodeBuildMCP：`--skip-xcodebuild`
 - 跳过 DebugBridge MCP：`--skip-debugbridge`
 - 跳过 Review 安装：`--skip-review`
 - 非交互指定 Review 后端：`--review-backend orchestrator|gstack`（默认 gstack）
@@ -37,9 +39,9 @@ bash scripts/install-dev-flow.sh --project /path/to/YourApp
 2. App 仓只会多出 `.dev-flow/`（会话状态 + `source-root` + DebugBridge / Review manifest）
 3. 安装时会提示选择 Review 后端；AI 可用 `--review-backend orchestrator` 或 `--review-backend gstack`
 4. 若 `.dev-flow/debugbridge-install.json` 显示 `pod_changed: true`：在 App 仓执行 `pod install`，并把 `.dev-flow/debugbridge-app-bootstrap.swift.snippet` 加到 Debug 启动路径（如 `AppDelegate` / `@main` App）
-5. 重启 Cursor/Codex MCP，使 `ui_dbugbridge_mcp` / `orchestrator_mcp` 生效
+5. 重启 Cursor/Codex MCP，使 `XcodeBuildMCP` / `ui_dbugbridge_mcp` / `orchestrator_mcp` 生效
 6. 装完后在 App 根目录跑：`bash /path/to/devflow/scripts/dev-flow.sh doctor`
-7. 环境门禁前：`build_run_device`（有线真机）→ `dev-flow.sh record-app-launch record` → `dev-flow.sh environment-health run`
+7. 环境门禁前：`session_set_defaults` → `build_run_device`（有线真机）→ `dev-flow.sh record-app-launch record` → `dev-flow.sh environment-health run`
 8. Figma token 用 `FIGMA_REST_TOKEN` 或 `FIGMA_ACCESS_TOKEN`
 
 安装完成后日常命令（在 App 根目录）：
