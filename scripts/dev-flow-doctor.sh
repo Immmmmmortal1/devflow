@@ -36,6 +36,7 @@ required=(
   dev-flow.sh
   dev-flow-init-project.sh
   install-debugbridge-mcp.sh
+  install-review-backend.sh
   resolve-dev-flow-session-id.sh
   dev-flow-session.sh
   environment-health-check.sh
@@ -113,6 +114,27 @@ PY
   echo "DebugBridge MCP: $debugbridge_root"
 else
   echo "NOTE: DebugBridge MCP not bound for this app. Run install-dev-flow.sh or install-debugbridge-mcp.sh --project ..." >&2
+fi
+
+if [[ -f "$DEV_FLOW_PROJECT_ROOT/.dev-flow/review-backend.json" ]]; then
+  review_backend="$(DEV_FLOW_REVIEW_JSON="$DEV_FLOW_PROJECT_ROOT/.dev-flow/review-backend.json" python3 - <<'PY'
+import json
+import os
+print(json.load(open(os.environ["DEV_FLOW_REVIEW_JSON"], encoding="utf-8")).get("backend", "unknown"))
+PY
+)"
+  echo "Review backend: $review_backend"
+  if [[ "$review_backend" == "orchestrator" && -f "$DEV_FLOW_PROJECT_ROOT/.dev-flow/orchestrator-mcp-root" ]]; then
+    orch_root="$(tr -d '[:space:]' < "$DEV_FLOW_PROJECT_ROOT/.dev-flow/orchestrator-mcp-root")"
+    if [[ ! -x "$orch_root/codex-stdio-wrapper.sh" ]]; then
+      echo "WARNING: orchestrator-mcp root is bound but not installed:" >&2
+      echo "  $orch_root" >&2
+      exit 1
+    fi
+    echo "Orchestrator MCP: $orch_root"
+  fi
+else
+  echo "NOTE: review backend manifest missing. Run install-dev-flow.sh to choose orchestrator-mcp or gstack-review." >&2
 fi
 
 echo "PASS: central dev-flow source is current; app project binding is ready."
