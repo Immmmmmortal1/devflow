@@ -9,6 +9,9 @@ STATE_DIR="$ROOT/.dev-flow/sessions"
 STATE_FILE="$STATE_DIR/$SESSION_ID.json"
 FIGMA_SKILL_ROOT="${FIGMA_REST_API_SKILL_ROOT:-$HOME/.codex/skills/figma-rest-api}"
 FIGMA_REST_TOKEN="${FIGMA_REST_TOKEN:-${FIGMA_ACCESS_TOKEN:-}}"
+if [[ -n "$FIGMA_REST_TOKEN" ]]; then
+  export FIGMA_REST_TOKEN
+fi
 
 usage() {
   cat <<'EOF'
@@ -24,8 +27,9 @@ adapter JSON must include producer=XcodeBuildMCP, schema_version=1, the current 
 status=available, build_run_device=success, device_transport=wired, and app_launched=true. Other
 probes use DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD and DEV_FLOW_REVIEW_MCP_HEALTH_CMD. Review MCP health
 defaults to scripts/review-health-probe.sh, which falls back to gstack-review when orchestrator MCP
-is unavailable. Figma REST uses the installed skill and FIGMA_REST_TOKEN (FIGMA_ACCESS_TOKEN is
-accepted as an alias) unless DEV_FLOW_FIGMA_REST_HEALTH_CMD is set.
+is unavailable. Figma REST defaults to a token-safe curl probe against /v1/me using
+FIGMA_REST_TOKEN (FIGMA_ACCESS_TOKEN is accepted as an alias); override with
+DEV_FLOW_FIGMA_REST_HEALTH_CMD only when a custom adapter is required.
 
 Session selection matches scripts/resolve-dev-flow-session-id.sh:
   DEV_FLOW_SESSION_ID, then CODEX_THREAD_ID, then CURSOR_CONVERSATION_ID.
@@ -225,7 +229,7 @@ if [[ "$figma_skill_status" == "available" ]]; then
   if [[ -n "${DEV_FLOW_FIGMA_REST_HEALTH_CMD:-}" ]]; then
     figma_result="$(run_probe "$DEV_FLOW_FIGMA_REST_HEALTH_CMD" figma_rest)"
   else
-    figma_result="$(run_probe "/usr/bin/python3 '$FIGMA_SKILL_ROOT/scripts/figma_rest.py' me >/dev/null" figma_rest)"
+    figma_result="$(run_probe "/usr/bin/curl -fsS --connect-timeout 5 --max-time 15 -H \"X-Figma-Token: \$FIGMA_REST_TOKEN\" https://api.figma.com/v1/me --output /dev/null" figma_rest)"
   fi
   figma_result="$(/usr/bin/python3 - "$figma_skill_evidence" "$figma_result" <<'PY'
 import json

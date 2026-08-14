@@ -107,8 +107,11 @@ of `orchestrator_mcp → code_review`.
 Resolve the installed `figma-rest-api` skill and verify both:
 
 - its `SKILL.md` and bundled `scripts/figma_rest.py` are present and readable;
-- its smallest read-only authentication request, `figma_rest.py me`, succeeds with the current
+- the default token-safe `curl` request to `https://api.figma.com/v1/me` succeeds with the current
   `FIGMA_REST_TOKEN` (or `FIGMA_ACCESS_TOKEN` alias) without printing or persisting the token.
+  The bundled Python client remains the data-fetching client, but is not used as the availability
+  probe because its Python `urllib` TLS path can fail independently of Figma reachability and
+  token validity.
 
 Treat missing skill files, missing credentials, HTTP 401/403, network failure, and malformed
 responses as separate blockers. Do not fetch a project or node merely to prove the skill is
