@@ -117,11 +117,12 @@ All four checks must return `available`:
 
 - current App physical-device build/install/launch preflight;
 - DebugBridge health and connectivity;
-- Review MCP current-session health;
+- Review MCP current-session health, or `gstack-review` fallback when orchestrator MCP is unavailable;
 - `figma-rest-api` Skill presence and read-only authentication check.
 
 If any result is `blocked` or `not-run`, stop before the selected route starts and report the exact
-environment blocker. Do not use a route-specific fallback to bypass this gate.
+environment blocker. Do not use a route-specific fallback to bypass this gate, except the built-in
+Review MCP → `gstack-review` (`/review`) fallback recorded by `scripts/review-health-probe.sh`.
 
 ### 3. Activate conditional skills
 
@@ -238,7 +239,9 @@ bash scripts/dev-flow-session.sh end
 
 1. No source edits before `confirm-gate` and `confirm-plan`.
 2. Every first-class route must pass `environment-health-check` before its route skill starts.
-3. A blocked or unrun environment check cannot be bypassed by selecting another route or fallback.
+3. A blocked or unrun environment check cannot be bypassed by selecting another route or fallback,
+   except Review MCP health may fall back to `gstack-review` (`/review`) through
+   `scripts/review-health-probe.sh`.
 4. No coding while the requirements artifact is `draft`, `pending-human-approval`, or `blocked`.
 5. The approved requirements chain is authoritative; code, fallback, tests, and review cannot
    invent, remove, coerce, or silently reinterpret states.

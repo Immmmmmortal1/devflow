@@ -130,7 +130,9 @@ If Review MCP is unavailable, unhealthy, or exceeds the bounded tool timeout:
 
 1. Record the failed phase and reason.
 2. Mark the Review MCP result as `unknown`; timeout is never `pass`.
-3. Use `gstack-review` as the fallback when it can provide an independent review.
+3. Use `gstack-review` as the fallback when it can provide an independent review. Read
+   `~/.claude/skills/gstack/review/SKILL.md` (or `GSTACK_REVIEW_SKILL_ROOT/SKILL.md`) and run the
+   `/review` workflow against the current diff.
 4. Mark the result source as `fallback`; do not label it as an MCP result.
 
 If both paths fail, return `review-blocked`. Local tests, self-review, or build results may be

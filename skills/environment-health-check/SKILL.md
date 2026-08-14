@@ -63,13 +63,15 @@ bash scripts/environment-health-check.sh run
 ```
 
 The script records the report in the current `.dev-flow/sessions/<session-id>.json` and exits
-non-zero when any check is `blocked` or `not-run`. Use `DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD` and
-`DEV_FLOW_REVIEW_MCP_HEALTH_CMD` when the registered service requires a local probe adapter. The
-App launch probe defaults to `scripts/read-app-launch-report.sh` after
-`scripts/record-app-launch-report.sh record`. The script can use a sibling
-`orchestrator-mcp/scripts/orchestrator-doctor.sh` when present; do not replace a failed probe with
-a hand-written `available` result. `dev-flow-session.sh` rejects `confirm-plan` and
-`approve-commit` until the recorded status is `available`.
+non-zero when any check is `blocked` or `not-run`. Use `DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD` when the
+registered service requires a local probe adapter. The App launch probe defaults to
+`scripts/read-app-launch-report.sh` after `scripts/record-app-launch-report.sh record`. Review MCP
+health defaults to `scripts/review-health-probe.sh`, which falls back to `gstack-review` when
+orchestrator MCP is unavailable. Override with `DEV_FLOW_REVIEW_MCP_HEALTH_CMD` only for tests or
+custom adapters. The script can use a sibling `orchestrator-mcp/scripts/orchestrator-doctor.sh`
+through that probe; do not replace a failed probe with a hand-written `available` result.
+`dev-flow-session.sh` rejects `confirm-plan` and `approve-commit` until the recorded status is
+`available`.
 
 ### 1. DebugBridge
 
@@ -92,6 +94,13 @@ Require a usable current session with `transport=stdio`, `registered=true`, and 
 PID. When the configured provider is needed for an actual review, run the provider credential check
 without printing secrets. A WebUI process or another task's MCP process is not evidence for the
 current session. Do not call a model review just to test health.
+
+When `scripts/environment-health-check.sh` runs, Review MCP health uses
+`scripts/review-health-probe.sh`. If orchestrator MCP is unavailable, the probe automatically
+falls back to an installed `gstack-review` skill (`/review`). Record the fallback in evidence as
+`review_mcp_unavailable;fallback=gstack-review`. Actual reviews must then use
+`code-review-workflow` with `Review path: fallback` and invoke the gstack `/review` workflow instead
+of `orchestrator_mcp → code_review`.
 
 ### 3. Figma REST API skill
 

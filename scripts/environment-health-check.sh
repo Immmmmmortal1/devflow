@@ -21,8 +21,10 @@ scripts/record-app-launch-report.sh record. By default the App launch probe read
 Override with DEV_FLOW_APP_LAUNCH_HEALTH_CMD when a custom adapter is required. The stored or
 adapter JSON must include producer=XcodeBuildMCP, schema_version=1, the current session_id,
 status=available, build_run_device=success, device_transport=wired, and app_launched=true. Other
-probes use DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD and DEV_FLOW_REVIEW_MCP_HEALTH_CMD. Figma REST uses the
-installed skill and FIGMA_REST_TOKEN unless DEV_FLOW_FIGMA_REST_HEALTH_CMD is set.
+probes use DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD and DEV_FLOW_REVIEW_MCP_HEALTH_CMD. Review MCP health
+defaults to scripts/review-health-probe.sh, which falls back to gstack-review when orchestrator MCP
+is unavailable. Figma REST uses the installed skill and FIGMA_REST_TOKEN unless
+DEV_FLOW_FIGMA_REST_HEALTH_CMD is set.
 
 Session selection matches scripts/resolve-dev-flow-session-id.sh:
   DEV_FLOW_SESSION_ID, then CODEX_THREAD_ID, then CURSOR_CONVERSATION_ID.
@@ -125,6 +127,55 @@ PY
   rm -f "$output_file" "$error_file"
 }
 
+run_review_probe() {
+  local command_text="$1"
+  local output_file error_file exit_code
+  output_file="$(mktemp)"
+  error_file="$(mktemp)"
+  if [[ -z "$command_text" ]]; then
+    rm -f "$output_file" "$error_file"
+    printf '%s\n' '{"status":"blocked","evidence":"review_probe_not_configured"}'
+    return
+  fi
+  set +e
+  /bin/bash -c "$command_text" >"$output_file" 2>"$error_file"
+  exit_code=$?
+  set -e
+  /usr/bin/python3 - "$output_file" "$exit_code" "$SESSION_ID" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+output_path = Path(sys.argv[1])
+exit_code = int(sys.argv[2])
+session_id = sys.argv[3]
+try:
+    payload = json.loads(output_path.read_text())
+except (json.JSONDecodeError, OSError):
+    payload = {}
+valid = (
+    exit_code == 0
+    and payload.get("producer") == "review-health-probe"
+    and payload.get("schema_version") == 1
+    and payload.get("session_id") == session_id
+    and payload.get("status") == "available"
+    and payload.get("transport") in ("mcp", "fallback")
+)
+if not valid:
+    print(json.dumps({"status": "blocked", "evidence": "invalid_or_failed_review_health_report"}, ensure_ascii=False))
+    sys.exit(0)
+if payload.get("transport") == "mcp":
+    evidence = "orchestrator_mcp_health_ok"
+elif payload.get("fallback") == "gstack-review":
+    skill_path = payload.get("skill_path") or "gstack-review"
+    evidence = f"review_mcp_unavailable;fallback=gstack-review;skill={skill_path}"
+else:
+    evidence = "review_health_probe_available"
+print(json.dumps({"status": "available", "evidence": evidence}, ensure_ascii=False))
+PY
+  rm -f "$output_file" "$error_file"
+}
+
 debug_command="${DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD:-}"
 if [[ -z "$debug_command" ]]; then
   debug_url="${DEV_FLOW_DEBUGBRIDGE_URL:-${BRIDGE_BASE_URL:-http://127.0.0.1:37777}}"
@@ -144,11 +195,10 @@ PY
 )"
 
 review_command="${DEV_FLOW_REVIEW_MCP_HEALTH_CMD:-}"
-if [[ -z "$review_command" ]]; then
-  default_review_doctor="${ORCHESTRATOR_MCP_ROOT:-$ROOT/../../orchestrator-mcp}/scripts/orchestrator-doctor.sh"
-  if [[ -x "$default_review_doctor" ]]; then
-    review_command="'$default_review_doctor' >/dev/null"
-  fi
+if [[ -n "$review_command" ]]; then
+  review_result="$(run_probe "$review_command" review_mcp)"
+else
+  review_result="$(run_review_probe "'$ROOT/scripts/review-health-probe.sh'")"
 fi
 
 figma_skill_status="available"
@@ -169,7 +219,6 @@ if [[ "$app_launch_status" == "available" ]]; then
 else
   debug_result='{"status":"blocked","evidence":"app_launch_preflight_failed"}'
 fi
-review_result="$(run_probe "$review_command" review_mcp)"
 
 if [[ "$figma_skill_status" == "available" ]]; then
   if [[ -n "${DEV_FLOW_FIGMA_REST_HEALTH_CMD:-}" ]]; then
