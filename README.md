@@ -2,7 +2,38 @@
 
 `dev-flow` 是面向 iOS 开发的顶层路由与自动化门禁包：按任务类型进入固定流水线，用可机械校验的产物与脚本卡住捷径。
 
-本仓库是 skill / 脚本的源码真相源（source of truth）。安装时通过 `scripts/link-global-skills.sh`（Codex）或 `scripts/link-cursor-skills.sh`（Cursor）链到本地 skills 目录。
+## 安装（AI / 人类先看这里）
+
+**从 devflow 仓库根目录执行一条命令即可。** Gate 脚本只留在 devflow clone 里，App 仓库里**不要**复制 `scripts/`。
+
+```bash
+cd /path/to/devflow
+git pull
+bash scripts/install-dev-flow.sh --project /path/to/YourApp
+```
+
+- `--project`：iOS App 工程根目录（含 `.xcodeproj` / `.xcworkspace` 的那一层）
+- 在 Cursor 里通常可写：`bash scripts/install-dev-flow.sh --project .`（当前 workspace 就是 App 时）
+- 只装 skills、暂不绑 App：`bash scripts/install-dev-flow.sh --skills-only`
+- 强制平台：`--cursor` 或 `--codex`（默认自动检测）
+
+**AI agent 安装规则：**
+
+1. 先 `git pull` devflow，再跑 `install-dev-flow.sh`，不要手抄 gate 脚本到 App 仓
+2. App 仓只会多出 `.dev-flow/`（会话状态 + `source-root` 绑定）
+3. 装完后在 App 根目录跑：`bash /path/to/devflow/scripts/dev-flow.sh doctor`
+4. 环境门禁前：`build_run_device` → `dev-flow.sh record-app-launch record` → `dev-flow.sh environment-health run`
+5. Figma token 用 `FIGMA_REST_TOKEN` 或 `FIGMA_ACCESS_TOKEN`
+
+安装完成后日常命令（在 App 根目录）：
+
+```bash
+bash /path/to/devflow/scripts/dev-flow.sh session start --type bug --task "label"
+bash /path/to/devflow/scripts/dev-flow.sh record-app-launch record
+bash /path/to/devflow/scripts/dev-flow.sh environment-health run
+```
+
+本仓库是 skill / 脚本的源码真相源（source of truth）。`install-dev-flow.sh` 会把 skills 链到本机 `~/.codex/skills` 或 `~/.cursor/skills`。
 
 ## 三条一等路由
 
@@ -123,26 +154,21 @@ Cursor 内禁止回退到共享 `local` session（见 `scripts/resolve-dev-flow-
 
 ## 安装到本机 skills
 
+推荐统一入口（见 README 顶部 **安装** 一节）：
+
 ```bash
-# 1. 克隆 devflow，链 skills（Codex / Cursor）
-bash scripts/link-global-skills.sh
-bash scripts/link-cursor-skills.sh
-
-# 2. 每个 iOS 工程只注册绑定（不复制 scripts/）
-bash scripts/dev-flow-init-project.sh /path/to/YourApp
-
-# 3. 在 App 根目录跑门禁（脚本始终从 devflow 仓执行）
-cd /path/to/YourApp
-bash /path/to/devflow/scripts/dev-flow.sh doctor
-bash /path/to/devflow/scripts/dev-flow.sh session start --type bug --task "label"
-# build_run_device 成功后：
-bash /path/to/devflow/scripts/dev-flow.sh record-app-launch record
-bash /path/to/devflow/scripts/dev-flow.sh environment-health run
+bash scripts/install-dev-flow.sh --project /path/to/YourApp
 ```
 
-**App 仓库里只有 `.dev-flow/` 状态目录，没有 gate 脚本副本。** 全团队共用一份 devflow clone。
+等价于依次执行 skills 链接 + app 绑定 + doctor。手动分步：
 
-`link-project-scripts.sh` 已废弃，等价于 `dev-flow-init-project.sh`。
+```bash
+bash scripts/link-global-skills.sh    # Codex
+bash scripts/link-cursor-skills.sh    # Cursor
+bash scripts/dev-flow-init-project.sh /path/to/YourApp
+```
+
+**App 仓库里只有 `.dev-flow/` 状态目录，没有 gate 脚本副本。**
 
 ## 目录结构
 

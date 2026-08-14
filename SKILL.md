@@ -31,7 +31,18 @@ investigation, feature development, bug fixing, new Figma-driven UI, or existing
 Do not use for explain-only questions, unrelated work, or pure code review that does not request
 the `ui_review` route.
 
-## Route and skill ownership
+## Install / upgrade (agents must run first)
+
+From the devflow git clone (after `git pull`):
+
+```bash
+bash scripts/install-dev-flow.sh --project <ios-app-root>
+```
+
+- Gate scripts stay in the devflow clone only; never copy them into the app repo
+- The app repo gets only `.dev-flow/` session state
+- Verify with: `bash <devflow-root>/scripts/dev-flow.sh doctor` from the app root
+
 
 | Route / condition | Required skill | Owns |
 |---|---|---|
