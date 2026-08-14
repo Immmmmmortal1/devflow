@@ -36,30 +36,22 @@ registered XcodeBuildMCP tools in this exact order:
 3. Record the bounded launch result for the current session:
 
 ```bash
-bash scripts/record-app-launch-report.sh record
+cd <app-root>
+bash /path/to/devflow/scripts/dev-flow.sh record-app-launch record
 ```
 
 Use `--report <path>` only when importing an already bounded XcodeBuildMCP JSON payload.
 4. Only after a successful build, install, launch, and record step may the DebugBridge check call
    `ensure_ports`, then `ping`.
 
-The default App launch probe reads `.dev-flow/sessions/<session-id>.app-launch.json`. Its JSON must
-identify `producer: XcodeBuildMCP`, schema version 1, current session id,
-`build_run_device: success`, `device_transport: wired`, and `app_launched: true`. Exit code alone
-or `/usr/bin/true` is not valid launch evidence. Override with `DEV_FLOW_APP_LAUNCH_HEALTH_CMD`
-only when a custom adapter is required.
+Gate scripts run from the central devflow clone; the app repo only stores `.dev-flow/` session state.
+The default App launch probe reads `.dev-flow/sessions/<session-id>.app-launch.json`. Exit code
+alone or `/usr/bin/true` is not valid launch evidence.
 
-If `session_show_defaults` is missing or wrong, or `build_run_device` fails at build, signing,
-installation, launch, or device connectivity, report the DebugBridge capability as `blocked` with
-the exact `app_launch` phase and first actionable error. Do not call `ensure_ports` or `ping` against
-an App that was not launched in the current check, and do not replace the launch with a stale App,
-Simulator, Xcode GUI automation, system log stream, or screenshot. Review MCP and Figma checks may
-run independently while this preflight is in progress or blocked.
-
-From a repository using `dev-flow`, execute the check through the session-aware script:
+From the app repo, execute the check through:
 
 ```bash
-bash scripts/environment-health-check.sh run
+bash /path/to/devflow/scripts/dev-flow.sh environment-health run
 ```
 
 The script records the report in the current `.dev-flow/sessions/<session-id>.json` and exits

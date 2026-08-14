@@ -104,22 +104,24 @@ After classification and before reading `feature-workflow`, `bug-workflow`, or `
 `environment-health-check`. This gate does not participate in route classification and must not
 change the selected route.
 
-Run the executable check for the current session:
+Run the executable check for the current session from the **devflow clone**, with the app repo as
+project root:
 
 ```bash
-bash scripts/dev-flow-doctor.sh
-bash scripts/environment-health-check.sh run
+cd <app-root>
+bash /path/to/devflow/scripts/dev-flow.sh doctor
+bash /path/to/devflow/scripts/dev-flow.sh environment-health run
 ```
 
 Before the health check, complete the physical-device launch preflight and record it:
 
 ```bash
-bash scripts/record-app-launch-report.sh record
+bash /path/to/devflow/scripts/dev-flow.sh record-app-launch record
 ```
 
-The doctor command fails fast when the target project's `scripts/` tree is stale. Skills install
-via `link-global-skills.sh` / `link-cursor-skills.sh` does not update app-repo scripts; run
-`link-project-scripts.sh <app-root>` after every devflow upgrade.
+Gate scripts live only in the devflow git clone. App repos keep `.dev-flow/sessions/` state only.
+Initialize once with `dev-flow-init-project.sh <app-root>` after clone; `git pull` devflow updates
+every project automatically without per-app script copies.
 
 The command writes the four results into `.dev-flow/sessions/<session-id>.json`. It exits non-zero
 when any capability is unavailable.

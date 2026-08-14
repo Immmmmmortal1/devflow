@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+# shellcheck source=lib/dev-flow-paths.sh
+source "$(cd "$(dirname "$SCRIPT_PATH")" && pwd)/lib/dev-flow-paths.sh"
+dev_flow_load_paths "$SCRIPT_PATH"
 # shellcheck source=resolve-dev-flow-session-id.sh
-source "$ROOT/scripts/resolve-dev-flow-session-id.sh"
+source "$(dev_flow_script_path resolve-dev-flow-session-id.sh)"
 SESSION_ID="$(resolve_dev_flow_session_id)" || exit $?
-STATE_DIR="$ROOT/.dev-flow/sessions"
 STATE_FILE="$STATE_DIR/$SESSION_ID.json"
 FIGMA_SKILL_ROOT="${FIGMA_REST_API_SKILL_ROOT:-$HOME/.codex/skills/figma-rest-api}"
 FIGMA_REST_TOKEN="${FIGMA_REST_TOKEN:-${FIGMA_ACCESS_TOKEN:-}}"
@@ -189,7 +191,7 @@ fi
 
 app_launch_command="${DEV_FLOW_APP_LAUNCH_HEALTH_CMD:-}"
 if [[ -z "$app_launch_command" ]]; then
-  app_launch_command="'$ROOT/scripts/read-app-launch-report.sh'"
+  app_launch_command="'$(dev_flow_script_path read-app-launch-report.sh)'"
 fi
 
 app_launch_result="$(run_app_launch_probe "$app_launch_command")"
@@ -203,7 +205,7 @@ review_command="${DEV_FLOW_REVIEW_MCP_HEALTH_CMD:-}"
 if [[ -n "$review_command" ]]; then
   review_result="$(run_probe "$review_command" review_mcp)"
 else
-  review_result="$(run_review_probe "'$ROOT/scripts/review-health-probe.sh'")"
+  review_result="$(run_review_probe "'$(dev_flow_script_path review-health-probe.sh)'")"
 fi
 
 figma_skill_status="available"
@@ -278,7 +280,7 @@ report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
 print(report_path)
 PY
 
-if "$ROOT/scripts/dev-flow-session.sh" environment-health --report "$REPORT_FILE" >/dev/null; then
+if "$(dev_flow_script_path dev-flow-session.sh)" environment-health --report "$REPORT_FILE" >/dev/null; then
   cat "$STATE_FILE"
   exit 0
 fi

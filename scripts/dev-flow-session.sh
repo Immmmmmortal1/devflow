@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+# shellcheck source=lib/dev-flow-paths.sh
+source "$(cd "$(dirname "$SCRIPT_PATH")" && pwd)/lib/dev-flow-paths.sh"
+dev_flow_load_paths "$SCRIPT_PATH"
 # shellcheck source=resolve-dev-flow-session-id.sh
-source "$ROOT/scripts/resolve-dev-flow-session-id.sh"
+source "$(dev_flow_script_path resolve-dev-flow-session-id.sh)"
 SESSION_ID="$(resolve_dev_flow_session_id)" || exit $?
-STATE_DIR="$ROOT/.dev-flow/sessions"
 STATE_FILE="$STATE_DIR/$SESSION_ID.json"
 
 usage() {
@@ -240,7 +242,7 @@ record_gate() {
   local gate_name="$1"
   local report_file="$2"
   mkdir -p "$STATE_DIR"
-  /usr/bin/python3 - "$STATE_FILE" "$SESSION_ID" "$gate_name" "$report_file" "$(now_utc)" "$ROOT" <<'PY'
+  /usr/bin/python3 - "$STATE_FILE" "$SESSION_ID" "$gate_name" "$report_file" "$(now_utc)" "$SOURCE_ROOT" <<'PY'
 import json
 import subprocess
 import sys

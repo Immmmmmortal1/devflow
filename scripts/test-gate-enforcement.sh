@@ -5,10 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_ROOT="$(/usr/bin/mktemp -d)"
 trap '/bin/rm -rf -- "$TMP_ROOT"' EXIT
 
-/bin/mkdir -p "$TMP_ROOT/scripts" "$TMP_ROOT/bin"
-/bin/cp "$ROOT/scripts/dev-flow-session.sh" "$TMP_ROOT/scripts/dev-flow-session.sh"
-/bin/cp "$ROOT/scripts/environment-health-check.sh" "$TMP_ROOT/scripts/environment-health-check.sh"
-/bin/cp "$ROOT/scripts/resolve-dev-flow-session-id.sh" "$TMP_ROOT/scripts/resolve-dev-flow-session-id.sh"
+/bin/mkdir -p "$TMP_ROOT/.dev-flow/sessions" "$TMP_ROOT/bin"
 cat > "$TMP_ROOT/bin/app-launch-probe" <<'EOF'
 #!/usr/bin/env bash
 /usr/bin/python3 - "${DEV_FLOW_SESSION_ID}" <<'PY'
@@ -21,22 +18,22 @@ EOF
 /bin/chmod +x "$TMP_ROOT/bin/app-launch-probe"
 
 run_for() {
-  DEV_FLOW_SESSION_ID=gate-test /bin/bash "$TMP_ROOT/scripts/dev-flow-session.sh" "$@"
+  DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=gate-test /bin/bash "$ROOT/scripts/dev-flow-session.sh" "$@"
 }
 
-DEV_FLOW_SESSION_ID=gate-test \
+DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=gate-test \
   DEV_FLOW_APP_LAUNCH_HEALTH_CMD="$TMP_ROOT/bin/app-launch-probe" \
   DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD=/usr/bin/true \
   DEV_FLOW_REVIEW_MCP_HEALTH_CMD=/usr/bin/true \
   DEV_FLOW_FIGMA_REST_HEALTH_CMD=/usr/bin/true \
-  /bin/bash "$TMP_ROOT/scripts/dev-flow-session.sh" start --type feature --task "gate test" >/dev/null
+  /bin/bash "$ROOT/scripts/dev-flow-session.sh" start --type feature --task "gate test" >/dev/null
 
-DEV_FLOW_SESSION_ID=gate-test \
+DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=gate-test \
   DEV_FLOW_APP_LAUNCH_HEALTH_CMD="$TMP_ROOT/bin/app-launch-probe" \
   DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD=/usr/bin/true \
   DEV_FLOW_REVIEW_MCP_HEALTH_CMD=/usr/bin/true \
   DEV_FLOW_FIGMA_REST_HEALTH_CMD=/usr/bin/true \
-  /bin/bash "$TMP_ROOT/scripts/environment-health-check.sh" run >/dev/null
+  /bin/bash "$ROOT/scripts/environment-health-check.sh" run >/dev/null
 
 run_for configure-gates --required review,figma_ui,runtime >/dev/null
 run_for confirm-plan >/dev/null

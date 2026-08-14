@@ -5,10 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_ROOT="$(/usr/bin/mktemp -d)"
 trap '/bin/rm -rf -- "$TMP_ROOT"' EXIT
 
-/bin/mkdir -p "$TMP_ROOT/scripts" "$TMP_ROOT/bin"
-/bin/cp "$ROOT/scripts/dev-flow-session.sh" "$TMP_ROOT/scripts/dev-flow-session.sh"
-/bin/cp "$ROOT/scripts/environment-health-check.sh" "$TMP_ROOT/scripts/environment-health-check.sh"
-/bin/cp "$ROOT/scripts/resolve-dev-flow-session-id.sh" "$TMP_ROOT/scripts/resolve-dev-flow-session-id.sh"
+/bin/mkdir -p "$TMP_ROOT/.dev-flow/sessions" "$TMP_ROOT/bin"
 cat > "$TMP_ROOT/bin/app-launch-probe" <<'EOF'
 #!/usr/bin/env bash
 /usr/bin/python3 - "${DEV_FLOW_SESSION_ID}" <<'PY'
@@ -22,18 +19,18 @@ EOF
 
 run_health_for() {
   local session_id="$1"
-  DEV_FLOW_SESSION_ID="$session_id" \
+  DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID="$session_id" \
     DEV_FLOW_APP_LAUNCH_HEALTH_CMD="$TMP_ROOT/bin/app-launch-probe" \
     DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD="/usr/bin/true" \
     DEV_FLOW_REVIEW_MCP_HEALTH_CMD="/usr/bin/true" \
     DEV_FLOW_FIGMA_REST_HEALTH_CMD="/usr/bin/true" \
-    /bin/bash "$TMP_ROOT/scripts/environment-health-check.sh" run >/dev/null
+    /bin/bash "$ROOT/scripts/environment-health-check.sh" run >/dev/null
 }
 
 run_for() {
   local session_id="$1"
   shift
-  CODEX_THREAD_ID="$session_id" /bin/bash "$TMP_ROOT/scripts/dev-flow-session.sh" "$@"
+  DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" CODEX_THREAD_ID="$session_id" /bin/bash "$ROOT/scripts/dev-flow-session.sh" "$@"
 }
 
 run_for thread-a start --type feature --task "task a" >/dev/null
@@ -49,14 +46,16 @@ run_for thread-a confirm-plan >/dev/null
 run_for thread-a end >/dev/null
 
 # Cursor conversation ids must isolate without DEV_FLOW_SESSION_ID / CODEX_THREAD_ID.
-CURSOR_CONVERSATION_ID=bd225fc5-4f36-47e2-876e-8d9d125033a1 \
-  /bin/bash "$TMP_ROOT/scripts/dev-flow-session.sh" start --type ui_review --task "cursor chat a" >/dev/null
+  CURSOR_CONVERSATION_ID=bd225fc5-4f36-47e2-876e-8d9d125033a1 \
+  DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" \
+  /bin/bash "$ROOT/scripts/dev-flow-session.sh" start --type ui_review --task "cursor chat a" >/dev/null
 CURSOR_CONVERSATION_ID=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee \
-  /bin/bash "$TMP_ROOT/scripts/dev-flow-session.sh" start --type bug --task "cursor chat b" >/dev/null
+  DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" \
+  /bin/bash "$ROOT/scripts/dev-flow-session.sh" start --type bug --task "cursor chat b" >/dev/null
 
 # Inside Cursor, missing conversation id must not fall back to shared local.json.
-if CURSOR_AGENT=1 DEV_FLOW_SESSION_ID= CODEX_THREAD_ID= CURSOR_CONVERSATION_ID= \
-  /bin/bash "$TMP_ROOT/scripts/dev-flow-session.sh" status >/dev/null 2>&1; then
+if DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" CURSOR_AGENT=1 DEV_FLOW_SESSION_ID= CODEX_THREAD_ID= CURSOR_CONVERSATION_ID= \
+  /bin/bash "$ROOT/scripts/dev-flow-session.sh" status >/dev/null 2>&1; then
   echo "FAIL: Cursor agent without conversation id must not use local fallback" >&2
   exit 1
 fi
@@ -102,7 +101,7 @@ PY
 
 resolved="$(
   CURSOR_CONVERSATION_ID=bd225fc5-4f36-47e2-876e-8d9d125033a1 \
-    /bin/bash "$TMP_ROOT/scripts/resolve-dev-flow-session-id.sh"
+    /bin/bash "$ROOT/scripts/resolve-dev-flow-session-id.sh"
 )"
 if [[ "$resolved" != "bd225fc5-4f36-47e2-876e-8d9d125033a1" ]]; then
   echo "FAIL: resolve-dev-flow-session-id.sh ignored CURSOR_CONVERSATION_ID: $resolved" >&2

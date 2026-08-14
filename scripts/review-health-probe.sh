@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+# shellcheck source=lib/dev-flow-paths.sh
+source "$(cd "$(dirname "$SCRIPT_PATH")" && pwd)/lib/dev-flow-paths.sh"
+dev_flow_load_paths "$SCRIPT_PATH"
 # shellcheck source=resolve-dev-flow-session-id.sh
-source "$ROOT/scripts/resolve-dev-flow-session-id.sh"
+source "$(dev_flow_script_path resolve-dev-flow-session-id.sh)"
 SESSION_ID="$(resolve_dev_flow_session_id)" || exit $?
 
 transport="none"
@@ -11,7 +14,7 @@ fallback=""
 skill_path=""
 status="blocked"
 
-doctor="${ORCHESTRATOR_MCP_ROOT:-$ROOT/../../orchestrator-mcp}/scripts/orchestrator-doctor.sh"
+doctor="${ORCHESTRATOR_MCP_ROOT:-$SOURCE_ROOT/../../orchestrator-mcp}/scripts/orchestrator-doctor.sh"
 if [[ -x "$doctor" ]] && "$doctor" >/dev/null 2>&1; then
   transport="mcp"
   status="available"

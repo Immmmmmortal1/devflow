@@ -5,11 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_ROOT="$(/usr/bin/mktemp -d)"
 trap '/bin/rm -rf -- "$TMP_ROOT"' EXIT
 
-/bin/mkdir -p "$TMP_ROOT/scripts" "$TMP_ROOT/bin"
-/bin/cp "$ROOT/scripts/dev-flow-session.sh" "$TMP_ROOT/scripts/dev-flow-session.sh"
-/bin/cp "$ROOT/scripts/environment-health-check.sh" "$TMP_ROOT/scripts/environment-health-check.sh"
-/bin/cp "$ROOT/scripts/resolve-dev-flow-session-id.sh" "$TMP_ROOT/scripts/resolve-dev-flow-session-id.sh"
-/bin/cp "$ROOT/scripts/validate-ui-review-artifacts.py" "$TMP_ROOT/scripts/validate-ui-review-artifacts.py"
+/bin/mkdir -p "$TMP_ROOT/.dev-flow/sessions" "$TMP_ROOT/bin"
 cat > "$TMP_ROOT/bin/app-launch-probe" <<'EOF'
 #!/usr/bin/env bash
 /usr/bin/python3 - "${DEV_FLOW_SESSION_ID}" <<'PY'
@@ -22,22 +18,22 @@ EOF
 /bin/chmod +x "$TMP_ROOT/bin/app-launch-probe"
 
 run_for() {
-  DEV_FLOW_SESSION_ID=parity-test /bin/bash "$TMP_ROOT/scripts/dev-flow-session.sh" "$@"
+  DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=parity-test /bin/bash "$ROOT/scripts/dev-flow-session.sh" "$@"
 }
 
-DEV_FLOW_SESSION_ID=parity-test \
+DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=parity-test \
   DEV_FLOW_APP_LAUNCH_HEALTH_CMD="$TMP_ROOT/bin/app-launch-probe" \
   DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD=/usr/bin/true \
   DEV_FLOW_REVIEW_MCP_HEALTH_CMD=/usr/bin/true \
   DEV_FLOW_FIGMA_REST_HEALTH_CMD=/usr/bin/true \
-  /bin/bash "$TMP_ROOT/scripts/dev-flow-session.sh" start --type ui_review --task "parity gate" >/dev/null
+  /bin/bash "$ROOT/scripts/dev-flow-session.sh" start --type ui_review --task "parity gate" >/dev/null
 
-DEV_FLOW_SESSION_ID=parity-test \
+DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=parity-test \
   DEV_FLOW_APP_LAUNCH_HEALTH_CMD="$TMP_ROOT/bin/app-launch-probe" \
   DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD=/usr/bin/true \
   DEV_FLOW_REVIEW_MCP_HEALTH_CMD=/usr/bin/true \
   DEV_FLOW_FIGMA_REST_HEALTH_CMD=/usr/bin/true \
-  /bin/bash "$TMP_ROOT/scripts/environment-health-check.sh" run >/dev/null
+  /bin/bash "$ROOT/scripts/environment-health-check.sh" run >/dev/null
 
 if run_for confirm-plan >/dev/null 2>&1; then
   echo "FAIL: ui_review confirm-plan passed without runtime/ui_parity gates" >&2
@@ -170,7 +166,7 @@ acceptance = {
 (root / "repair-accepted.json").write_text(json.dumps(acceptance) + "\n")
 PY
 
-/usr/bin/python3 "$TMP_ROOT/scripts/validate-ui-review-artifacts.py" \
+/usr/bin/python3 "$ROOT/scripts/validate-ui-review-artifacts.py" \
   --workspace "$TMP_ROOT/artifacts" --stage all --session-id parity-test \
   --report "$TMP_ROOT/artifacts/artifact-validation.json" >/dev/null
 
@@ -296,7 +292,7 @@ if run_for record-gate --name ui_parity --report "$TMP_ROOT/ui_parity.json" >/de
   exit 1
 fi
 /bin/mv "$TMP_ROOT/parity-result.valid.json" "$TMP_ROOT/artifacts/parity-result.json"
-/usr/bin/python3 "$TMP_ROOT/scripts/validate-ui-review-artifacts.py" \
+/usr/bin/python3 "$ROOT/scripts/validate-ui-review-artifacts.py" \
   --workspace "$TMP_ROOT/artifacts" --stage all --session-id parity-test \
   --report "$TMP_ROOT/artifacts/artifact-validation.json" >/dev/null
 
@@ -323,13 +319,13 @@ DEV_FLOW_SESSION_ID=parity-read-only \
   DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD=/usr/bin/true \
   DEV_FLOW_REVIEW_MCP_HEALTH_CMD=/usr/bin/true \
   DEV_FLOW_FIGMA_REST_HEALTH_CMD=/usr/bin/true \
-  /bin/bash "$TMP_ROOT/scripts/dev-flow-session.sh" start --type ui_review --task "read only" >/dev/null
+  /bin/bash "$ROOT/scripts/dev-flow-session.sh" start --type ui_review --task "read only" >/dev/null
 DEV_FLOW_SESSION_ID=parity-read-only \
   DEV_FLOW_APP_LAUNCH_HEALTH_CMD="$TMP_ROOT/bin/app-launch-probe" \
   DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD=/usr/bin/true \
   DEV_FLOW_REVIEW_MCP_HEALTH_CMD=/usr/bin/true \
   DEV_FLOW_FIGMA_REST_HEALTH_CMD=/usr/bin/true \
-  /bin/bash "$TMP_ROOT/scripts/environment-health-check.sh" run >/dev/null
+  /bin/bash "$ROOT/scripts/environment-health-check.sh" run >/dev/null
 
 /usr/bin/python3 - "$TMP_ROOT/artifacts" "$TMP_ROOT/read-only-artifacts" <<'PY'
 import hashlib
@@ -354,7 +350,7 @@ current["baseline_sha256"] = {
 }
 current_path.write_text(json.dumps(current) + "\n")
 PY
-/usr/bin/python3 "$TMP_ROOT/scripts/validate-ui-review-artifacts.py" \
+/usr/bin/python3 "$ROOT/scripts/validate-ui-review-artifacts.py" \
   --workspace "$TMP_ROOT/read-only-artifacts" --stage parity --session-id parity-read-only \
   --report "$TMP_ROOT/read-only-artifacts/artifact-validation.json" >/dev/null
 
@@ -384,16 +380,16 @@ payload.pop("artifact_validation_report")
 Path(sys.argv[2]).write_text(json.dumps(payload) + "\n")
 PY
 if DEV_FLOW_SESSION_ID=parity-read-only \
-  /bin/bash "$TMP_ROOT/scripts/dev-flow-session.sh" record-gate \
+  /bin/bash "$ROOT/scripts/dev-flow-session.sh" record-gate \
   --name review --report "$TMP_ROOT/read-only-review-invalid.json" >/dev/null 2>&1; then
   echo "FAIL: read-only ui_review passed without artifact validation" >&2
   exit 1
 fi
 DEV_FLOW_SESSION_ID=parity-read-only \
-  /bin/bash "$TMP_ROOT/scripts/dev-flow-session.sh" record-gate \
+  /bin/bash "$ROOT/scripts/dev-flow-session.sh" record-gate \
   --name review --report "$TMP_ROOT/read-only-review.json" >/dev/null
 if DEV_FLOW_SESSION_ID=parity-read-only \
-  /bin/bash "$TMP_ROOT/scripts/dev-flow-session.sh" approve-commit >/dev/null 2>&1; then
+  /bin/bash "$ROOT/scripts/dev-flow-session.sh" approve-commit >/dev/null 2>&1; then
   echo "FAIL: read-only ui_review reached commit without confirm-plan" >&2
   exit 1
 fi

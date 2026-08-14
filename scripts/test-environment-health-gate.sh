@@ -5,10 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_ROOT="$(/usr/bin/mktemp -d)"
 trap '/bin/rm -rf -- "$TMP_ROOT"' EXIT
 
-/bin/mkdir -p "$TMP_ROOT/scripts" "$TMP_ROOT/bin"
-/bin/cp "$ROOT/scripts/dev-flow-session.sh" "$TMP_ROOT/scripts/dev-flow-session.sh"
-/bin/cp "$ROOT/scripts/environment-health-check.sh" "$TMP_ROOT/scripts/environment-health-check.sh"
-/bin/cp "$ROOT/scripts/resolve-dev-flow-session-id.sh" "$TMP_ROOT/scripts/resolve-dev-flow-session-id.sh"
+/bin/mkdir -p "$TMP_ROOT/.dev-flow/sessions" "$TMP_ROOT/bin"
 
 cat > "$TMP_ROOT/bin/ok-probe" <<'EOF'
 #!/usr/bin/env bash
@@ -32,18 +29,18 @@ EOF
 run_for() {
   local session_id="$1"
   shift
-  DEV_FLOW_SESSION_ID="$session_id" /bin/bash "$TMP_ROOT/scripts/dev-flow-session.sh" "$@"
+  DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID="$session_id" /bin/bash "$ROOT/scripts/dev-flow-session.sh" "$@"
 }
 
 run_health_for() {
   local session_id="$1"
   shift
-  DEV_FLOW_SESSION_ID="$session_id" \
+  DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID="$session_id" \
     DEV_FLOW_APP_LAUNCH_HEALTH_CMD="$TMP_ROOT/bin/app-launch-probe" \
     DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD="$TMP_ROOT/bin/ok-probe" \
     DEV_FLOW_REVIEW_MCP_HEALTH_CMD="$TMP_ROOT/bin/ok-probe" \
     DEV_FLOW_FIGMA_REST_HEALTH_CMD="$TMP_ROOT/bin/ok-probe" \
-    /bin/bash "$TMP_ROOT/scripts/environment-health-check.sh" run "$@"
+    /bin/bash "$ROOT/scripts/environment-health-check.sh" run "$@"
 }
 
 record_review_for() {
@@ -61,7 +58,7 @@ Path(sys.argv[1]).write_text(json.dumps({
     "evidence": "test review pass",
 }) + "\n")
 PY
-  DEV_FLOW_SESSION_ID="$session_id" /bin/bash "$TMP_ROOT/scripts/dev-flow-session.sh" \
+  DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID="$session_id" /bin/bash "$ROOT/scripts/dev-flow-session.sh" \
     record-gate --name review --report "$TMP_ROOT/review-$session_id.json" >/dev/null
 }
 
@@ -80,12 +77,12 @@ record_review_for healthy
 run_for healthy approve-commit >/dev/null
 
 run_for blocked start --type bug --task "blocked task" >/dev/null
-if DEV_FLOW_SESSION_ID=blocked \
+if DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=blocked \
   DEV_FLOW_APP_LAUNCH_HEALTH_CMD="$TMP_ROOT/bin/app-launch-probe" \
   DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD="$TMP_ROOT/bin/fail-probe" \
   DEV_FLOW_REVIEW_MCP_HEALTH_CMD="$TMP_ROOT/bin/ok-probe" \
   DEV_FLOW_FIGMA_REST_HEALTH_CMD="$TMP_ROOT/bin/ok-probe" \
-  /bin/bash "$TMP_ROOT/scripts/environment-health-check.sh" run >/dev/null 2>&1; then
+  /bin/bash "$ROOT/scripts/environment-health-check.sh" run >/dev/null 2>&1; then
   echo "FAIL: blocked environment health returned success" >&2
   exit 1
 fi
@@ -95,12 +92,12 @@ if run_for blocked confirm-plan >/dev/null 2>&1; then
 fi
 
 run_for invalid-launch start --type ui_review --task "invalid launch evidence" >/dev/null
-if DEV_FLOW_SESSION_ID=invalid-launch \
+if DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=invalid-launch \
   DEV_FLOW_APP_LAUNCH_HEALTH_CMD=/usr/bin/true \
   DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD="$TMP_ROOT/bin/ok-probe" \
   DEV_FLOW_REVIEW_MCP_HEALTH_CMD="$TMP_ROOT/bin/ok-probe" \
   DEV_FLOW_FIGMA_REST_HEALTH_CMD="$TMP_ROOT/bin/ok-probe" \
-  /bin/bash "$TMP_ROOT/scripts/environment-health-check.sh" run >/dev/null 2>&1; then
+  /bin/bash "$ROOT/scripts/environment-health-check.sh" run >/dev/null 2>&1; then
   echo "FAIL: exit-code-only App launch probe was accepted" >&2
   exit 1
 fi

@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+# shellcheck source=lib/dev-flow-paths.sh
+source "$(cd "$(dirname "$SCRIPT_PATH")" && pwd)/lib/dev-flow-paths.sh"
+dev_flow_load_paths "$SCRIPT_PATH"
 # shellcheck source=resolve-dev-flow-session-id.sh
-source "$ROOT/scripts/resolve-dev-flow-session-id.sh"
+source "$(dev_flow_script_path resolve-dev-flow-session-id.sh)"
 SESSION_ID="$(resolve_dev_flow_session_id)" || exit $?
-STATE_DIR="$ROOT/.dev-flow/sessions"
 REPORT_FILE="$STATE_DIR/$SESSION_ID.app-launch.json"
 
 usage() {
