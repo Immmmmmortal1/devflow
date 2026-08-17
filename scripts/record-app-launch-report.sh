@@ -56,6 +56,7 @@ mkdir -p "$STATE_DIR"
 
 /usr/bin/python3 - "$REPORT_FILE" "$SESSION_ID" "$source_path" "$(now_utc)" <<'PY'
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -83,6 +84,11 @@ def validate_payload(payload):
         raise SystemExit("App launch report session_id does not match the current session.")
     if payload.get("app_launched") is not True:
         raise SystemExit("app_launched must be true.")
+    if session_id == "local" and os.environ.get("CURSOR_AGENT") == "1":
+        raise SystemExit(
+            "Cannot record app launch for session_id 'local' inside Cursor. "
+            "Run dev-flow session start and pass DEV_FLOW_SESSION_ID via build_run_device env."
+        )
 
 
 def canonical():
@@ -108,6 +114,12 @@ if source_path:
         payload["recorded_at"] = timestamp
 else:
     payload = canonical()
+
+if session_id == "local" and os.environ.get("CURSOR_AGENT") == "1":
+    raise SystemExit(
+        "Cannot record app launch for session_id 'local' inside Cursor. "
+        "Run dev-flow session start and pass DEV_FLOW_SESSION_ID via build_run_device env."
+    )
 
 report_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 print(report_path)

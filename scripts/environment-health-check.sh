@@ -134,6 +134,76 @@ PY
   rm -f "$output_file" "$error_file"
 }
 
+run_bridge_session_probe() {
+  local command_text="$1"
+  local output_file error_file exit_code
+  output_file="$(mktemp)"
+  error_file="$(mktemp)"
+  if [[ -z "$command_text" ]]; then
+    rm -f "$output_file" "$error_file"
+    printf '%s\n' '{"status":"blocked","evidence":"bridge_session_probe_not_configured"}'
+    return
+  fi
+  set +e
+  /bin/bash -c "$command_text" >"$output_file" 2>"$error_file"
+  exit_code=$?
+  set -e
+  /usr/bin/python3 - "$output_file" "$exit_code" "$SESSION_ID" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+output_path = Path(sys.argv[1])
+exit_code = int(sys.argv[2])
+session_id = sys.argv[3]
+try:
+    payload = json.loads(output_path.read_text())
+except (json.JSONDecodeError, OSError):
+    payload = {}
+
+bridge_session = payload.get("bridge_session_id")
+status = payload.get("status")
+evidence = payload.get("evidence") or "bridge_session_probe_invalid"
+
+valid = (
+    exit_code == 0
+    and status == "available"
+    and isinstance(bridge_session, str)
+    and bridge_session
+    and (
+        (session_id == "local" and bridge_session == "local")
+        or (
+            session_id != "local"
+            and bridge_session == session_id
+            and bridge_session != "local"
+        )
+    )
+)
+
+if valid:
+    result = {
+        "status": "available",
+        "evidence": evidence,
+        "bridge_session_id": bridge_session,
+    }
+else:
+    if status == "blocked" and evidence:
+        blocked_evidence = evidence
+    elif exit_code != 0:
+        blocked_evidence = f"bridge_session_probe_exit_{exit_code}"
+    else:
+        blocked_evidence = "invalid_or_failed_bridge_session_probe"
+    result = {
+        "status": "blocked",
+        "evidence": blocked_evidence,
+    }
+    if isinstance(bridge_session, str) and bridge_session:
+        result["bridge_session_id"] = bridge_session
+print(json.dumps(result, ensure_ascii=False))
+PY
+  rm -f "$output_file" "$error_file"
+}
+
 run_review_probe() {
   local command_text="$1"
   local output_file error_file exit_code
@@ -185,8 +255,7 @@ PY
 
 debug_command="${DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD:-}"
 if [[ -z "$debug_command" ]]; then
-  debug_url="${DEV_FLOW_DEBUGBRIDGE_URL:-${BRIDGE_BASE_URL:-http://127.0.0.1:37777}}"
-  debug_command="/usr/bin/curl -fsS --max-time 3 '${debug_url%/}/ping' >/dev/null"
+  debug_command="'$(dev_flow_script_path validate-bridge-session.sh)' run"
 fi
 
 app_launch_command="${DEV_FLOW_APP_LAUNCH_HEALTH_CMD:-}"
@@ -222,7 +291,11 @@ elif [[ -z "${FIGMA_REST_TOKEN:-}" && -z "${DEV_FLOW_FIGMA_REST_HEALTH_CMD:-}" ]
 fi
 
 if [[ "$app_launch_status" == "available" ]]; then
-  debug_result="$(run_probe "$debug_command" debugbridge)"
+  if [[ -n "${DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD:-}" ]]; then
+    debug_result="$(run_probe "$debug_command" debugbridge)"
+  else
+    debug_result="$(run_bridge_session_probe "$debug_command")"
+  fi
 else
   debug_result='{"status":"blocked","evidence":"app_launch_preflight_failed"}'
 fi

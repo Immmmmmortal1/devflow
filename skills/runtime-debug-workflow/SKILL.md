@@ -18,7 +18,7 @@ meaning, UI parity, code review, or commit approval.
 
 Use the registered tools in this order:
 
-1. XcodeBuildMCP named profile = current session id (`DEV_FLOW_SESSION_ID`, then `CODEX_THREAD_ID`, then `CURSOR_CONVERSATION_ID`), then `session_show_defaults`, then `build_run_device`.
+1. XcodeBuildMCP named profile = current session id (`DEV_FLOW_SESSION_ID`, then `CODEX_THREAD_ID`, then `CURSOR_CONVERSATION_ID`), then `session_show_defaults`, then `build_run_device` with `env: { DEV_FLOW_SESSION_ID: "<current session id>" }`.
 2. DebugBridge `get_debug_page` and UI actions such as `tap_element`.
 3. DebugBridge `inspect_ui` for the current App UIWindow/UIView tree.
 4. DebugBridge `read_app_logs` for the complete current-run in-memory log pool, or
@@ -37,8 +37,15 @@ Resolve the current session id (`DEV_FLOW_SESSION_ID`, then `CODEX_THREAD_ID`, t
 `CURSOR_CONVERSATION_ID`; never `local` inside Cursor). Call `session_set_defaults` with
 `profile` set to that id and `createIfNotExists: true` for this worktree, then
 `session_show_defaults`. Confirm the project/workspace, scheme, configuration, and physical
-device belong to this repo, not a sibling worktree. Then call `build_run_device`. Do not put
-the session id into the launched App `env` map unless a separate contract requires it.
+device belong to this repo, not a sibling worktree. Then call `build_run_device` with the
+current session id in the App launch environment so DebugBridge identity matches dev-flow:
+
+```text
+build_run_device({ env: { DEV_FLOW_SESSION_ID: "<current session id>" } })
+```
+
+Without this env, the App reports `sessionID: local` in `/identity` and environment-health /
+commit gates block DebugBridge.
 
 Record:
 

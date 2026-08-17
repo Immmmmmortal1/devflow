@@ -32,7 +32,9 @@ registered XcodeBuildMCP tools in this exact order:
    `session_show_defaults` and confirm the project/workspace, scheme, configuration, and
    physical device. Do not assume defaults or use a simulator.
 2. Call `build_run_device` to build, install, and launch the current App. Pass the current
-   `DEV_FLOW_SESSION_ID` to the launched App when the project supports it.
+   session id to the launched App via `env: { DEV_FLOW_SESSION_ID: "<current session id>" }`.
+   The App reads this at launch for DebugBridge `/identity`; without it, identity reports
+   `sessionID: local` and the DebugBridge gate blocks.
 3. Record the bounded launch result for the current session:
 
 ```bash
@@ -68,11 +70,14 @@ through that probe; do not replace a failed probe with a hand-written `available
 ### 1. DebugBridge
 
 After the App launch preflight succeeds, use the registered DebugBridge health capabilities,
-normally `ensure_ports` followed by `ping`. If health passes, record the returned device/service
-evidence without exposing credentials or unbounded payloads. If the tools are not registered, the
-service times out, the App is not running, or the device bridge is not reachable, return `blocked`
-with the exact missing capability and phase. Do not substitute Simulator, Xcode GUI automation,
-system log streams, or a screenshot.
+normally `ensure_ports` followed by `ping`. The default gate script also validates `/identity`
+sessionID against the current dev-flow session via `scripts/validate-bridge-session.sh`; bridge
+session `local` blocks when the dev-flow session is not `local`. If health passes, record the
+returned device/service evidence without exposing credentials or unbounded payloads. If the tools
+are not registered, the service times out, the App is not running, the device bridge is not
+reachable, or App session id does not match dev-flow, return `blocked` with the exact missing
+capability and phase. Do not substitute Simulator, Xcode GUI automation, system log streams, or
+a screenshot.
 
 ### 2. Review MCP
 

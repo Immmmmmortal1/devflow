@@ -104,19 +104,22 @@ next task starts clean. It does **not** kill other hosts' orphaned MCP/iproxy pr
 7. Never skip `git-commit-convention` when generating or using a dev-flow commit message.
 8. Message generation never counts as user confirmation and never performs `git commit`.
 9. Never commit when validation required by an active skill is missing or failed.
-10. When dev-flow marks `figma_ui`, `review`, `runtime`, or `ui_parity` as required, each must be
+10. Environment health must show DebugBridge `available` with a bridge session id that matches the
+    current dev-flow session (not `local` inside Cursor). Re-launch the App with
+    `build_run_device({ env: { DEV_FLOW_SESSION_ID: "<session id>" } })` when identity is stale.
+11. When dev-flow marks `figma_ui`, `review`, `runtime`, or `ui_parity` as required, each must be
     recorded in the current session before `approve-commit`; the required statuses are G0-G12 all
     `pass`, review `pass`, runtime `runtime-verified`, and ui_parity `accepted` with matching
     authorization/acceptance reports respectively.
-11. **Feature:** never reach step 8 without **`Post-implementation bugkb`** filled — same bar as confirm-gate `bugkb findings` (concrete, not placeholder).
-12. Before every commit, detect same-branch sibling worktrees. If any exist, commit the child
+12. **Feature:** never reach step 8 without **`Post-implementation bugkb`** filled — same bar as confirm-gate `bugkb findings` (concrete, not placeholder).
+13. Before every commit, detect same-branch sibling worktrees. If any exist, commit the child
     first, merge only into that family's main worktree, then sync siblings. Never merge a
     `{family}_N` commit into `master`, `main`, `appstore/*`, or any other family.
-13. The primary clone path is not automatically the family main. Example: work in
+14. The primary clone path is not automatically the family main. Example: work in
     `1.2.0_dev_2` merges to `1.2.0_dev`, never to `master`.
-14. Sibling sync is fast-forward only. Preserve each sibling's unrelated local WIP (stash → ff →
+15. Sibling sync is fast-forward only. Preserve each sibling's unrelated local WIP (stash → ff →
     stash pop). Never `reset --hard` sibling WIP. If `{family}` cannot fast-forward, stop and ask.
-15. After a successful commit, always run **Post-commit session release** before starting unrelated
+16. After a successful commit, always run **Post-commit session release** before starting unrelated
     work in the same chat.
 
 ## Same-branch worktree family
