@@ -44,7 +44,9 @@ After implementation and validation, before `git commit`.
     dev-flow mechanical gate first. Then run `bash scripts/dev-flow-session.sh approve-commit` →
     inspect the scoped diff → **commit in the child worktree first** (or on main if there is no
     child) with the generated or user-adjusted message → **fast-forward / merge into that family's
-    main worktree only** → **sync every sibling worktree in the same family** to that commit.
+    main worktree only** → **sync every sibling worktree in the same family** to that commit →
+    **release DebugBridge for this session** (see **Post-commit session release** below) →
+    `bash scripts/dev-flow-session.sh end`.
 11. If user declines → leave changes uncommitted. Each additional commit scope requires its own generated message, summary, validation report, and confirmation.
 
 ## Commit summary template
@@ -76,6 +78,21 @@ Placeholders (`n/a`, `skipped`, `待查`, `TBD`) → **hard stop**; run bugkb fi
 
 For **bug** path: use `n/a (pre-implementation bugkb already in confirm-gate)` unless you re-ran bugkb after code changes.
 
+## Post-commit session release
+
+After a successful commit for the current dev-flow scope, treat the task as **complete** for this
+session:
+
+1. Call **`ui_dbugbridge_mcp.release_session`** with:
+   - `reason`: `dev-flow commit complete`
+   - `exitAfterRelease`: `true` (default)
+2. Run `bash scripts/dev-flow-session.sh end` in the app repo.
+3. Do **not** call DebugBridge business tools again in this chat after release.
+
+`release_session` stops this MCP instance's `iproxy` forwards and exits the server process so the
+next task starts clean. It does **not** kill other hosts' orphaned MCP/iproxy processes; run
+`bash <devflow-root>/scripts/debugbridge-cleanup.sh` if old instances remain.
+
 ## Hard rules
 
 1. Never commit without user confirmation.
@@ -99,6 +116,8 @@ For **bug** path: use `n/a (pre-implementation bugkb already in confirm-gate)` u
     `1.2.0_dev_2` merges to `1.2.0_dev`, never to `master`.
 14. Sibling sync is fast-forward only. Preserve each sibling's unrelated local WIP (stash → ff →
     stash pop). Never `reset --hard` sibling WIP. If `{family}` cannot fast-forward, stop and ask.
+15. After a successful commit, always run **Post-commit session release** before starting unrelated
+    work in the same chat.
 
 ## Same-branch worktree family
 
