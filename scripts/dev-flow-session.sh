@@ -27,6 +27,7 @@ Session selection:
   Outside Cursor, falls back to "local". Inside Cursor, a missing conversation id is an error.
 Gate note:
   ui_review source repair requires review,runtime,ui_parity before confirm-plan.
+  Environment health must run before confirm-plan and cannot be updated after confirmation.
 EOF
 }
 
@@ -65,8 +66,9 @@ write_state() {
   local session_type="${2:-}"
   local task="${3:-}"
   local required_gates="${4:-}"
+  local project_root="${5:-}"
   mkdir -p "$STATE_DIR"
-  /usr/bin/python3 - "$STATE_FILE" "$SESSION_ID" "$action" "$session_type" "$task" "$required_gates" "$(now_utc)" <<'PY'
+  /usr/bin/python3 - "$STATE_FILE" "$SESSION_ID" "$action" "$session_type" "$task" "$required_gates" "$(now_utc)" "$project_root" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -78,6 +80,7 @@ session_type = sys.argv[4]
 task = sys.argv[5]
 required_gates_arg = sys.argv[6]
 timestamp = sys.argv[7]
+project_root = sys.argv[8]
 
 all_gates = ("figma_ui", "review", "runtime", "ui_parity")
 required_gates = [item for item in required_gates_arg.split(",") if item]
@@ -149,6 +152,28 @@ elif action == "confirm-plan":
                 "ui_review source repair requires gates configured before confirm-plan: "
                 + ",".join(sorted(missing))
             )
+    # 环境健康检查必须有 checked_at 时间戳，禁止空值通过 confirm-plan
+    checked_at = data.get("environment_health", {}).get("checked_at")
+    if not isinstance(checked_at, str) or not checked_at.strip():
+        raise SystemExit("Environment health checked_at is missing; run environment-health-check.sh before confirm-plan.")
+    # requirements 门禁：存在 pending-human-approval 条目时禁止 confirm-plan
+    if project_root:
+        req_index = Path(project_root) / ".dev-flow" / "requirements" / "index.json"
+        if req_index.is_file():
+            try:
+                req_payload = json.loads(req_index.read_text())
+            except json.JSONDecodeError as exc:
+                raise SystemExit(f"requirements index.json is invalid: {exc}") from exc
+            # 宽松校验：扫描 requirements/items/logic_ids 任一字段中的 pending-human-approval
+            items = req_payload.get("requirements") or req_payload.get("items") or req_payload.get("logic_ids") or []
+            if isinstance(items, list):
+                for item in items:
+                    if isinstance(item, dict) and item.get("status") == "pending-human-approval":
+                        raise SystemExit("requirements contain pending-human-approval items; approve or close them before confirm-plan.")
+            elif isinstance(items, dict):
+                for entry in items.values():
+                    if isinstance(entry, dict) and entry.get("status") == "pending-human-approval":
+                        raise SystemExit("requirements contain pending-human-approval items; approve or close them before confirm-plan.")
     data["confirmed_at"] = timestamp
     data["session_id"] = session_id
     if task:
@@ -211,6 +236,9 @@ if not state_path.exists():
 state = json.loads(state_path.read_text())
 if not state.get("active"):
     raise SystemExit("No active dev-flow session. Run start first.")
+# plan 确认后禁止更新环境健康，避免确认后环境状态漂移
+if state.get("confirmed_at"):
+    raise SystemExit("Environment health cannot be updated after plan confirmation.")
 report = json.loads(report_path.read_text())
 if report.get("producer") != "environment-health-check" or report.get("schema_version") != 1:
     raise SystemExit("Environment report was not produced by environment-health-check.")
@@ -243,6 +271,7 @@ record_gate() {
   local report_file="$2"
   mkdir -p "$STATE_DIR"
   /usr/bin/python3 - "$STATE_FILE" "$SESSION_ID" "$gate_name" "$report_file" "$(now_utc)" "$SOURCE_ROOT" <<'PY'
+import hashlib
 import json
 import subprocess
 import sys
@@ -254,6 +283,11 @@ gate_name = sys.argv[3]
 report_path = Path(sys.argv[4])
 recorded_at = sys.argv[5]
 devflow_root = Path(sys.argv[6]).resolve()
+
+
+def sha256_of(path):
+    # 计算 artifact 文件内容 sha256，用于与人工批准时记录的 digest 比对
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 if gate_name not in ("figma_ui", "review", "runtime", "ui_parity"):
     raise SystemExit("Unknown gate. Use figma_ui, review, runtime, or ui_parity.")
@@ -280,15 +314,39 @@ if report.get("session_id") != session_id:
 if report.get("gate") != gate_name:
     raise SystemExit("Gate report name does not match --name.")
 
+# review gate: 顶层字段白名单 + producer/schema_version 校验
+if gate_name == "review":
+    REVIEW_ALLOWED_FIELDS = {
+        "session_id", "gate", "status", "evidence", "producer", "schema_version",
+        "route", "reviewer_result", "run_id", "diff_evidence", "source_edits",
+        "artifact_workspace", "artifact_validation_report", "baseline_report",
+        "parity_confirmed_report", "repair_accepted_report", "verified_ids",
+        "debugbridge_evidence",
+    }
+    extra = set(report.keys()) - REVIEW_ALLOWED_FIELDS
+    if extra:
+        raise SystemExit("review report contains unknown fields: " + ", ".join(sorted(extra)))
+    if report.get("producer") not in ("code-review-workflow", "review-health-probe", "ui-review"):
+        raise SystemExit("review report producer must be code-review-workflow, review-health-probe, or ui-review.")
+    if report.get("schema_version") != 1:
+        raise SystemExit("review report schema_version must be 1.")
+
 status = report.get("status")
 allowed = {
     "figma_ui": {"pass", "failed", "blocked"},
-    "review": {"pass", "revise", "blocked", "failed", "unknown"},
+    "review": {"pass", "revise", "blocked"},
     "runtime": {"runtime-verified", "runtime-failed", "runtime-blocked"},
     "ui_parity": {"accepted", "findings-open", "blocked"},
 }
 if status not in allowed[gate_name]:
     raise SystemExit(f"Invalid {gate_name} status: {status}")
+
+# review gate: status 与 reviewer_result 必须一致
+if gate_name == "review":
+    reviewer_result = report.get("reviewer_result")
+    expected_result = {"pass": "pass", "revise": "revise", "blocked": "blocked"}.get(status)
+    if reviewer_result != expected_result:
+        raise SystemExit(f"review status={status} requires reviewer_result={expected_result} (got {reviewer_result!r})")
 
 def run_ui_review_validator(artifact_workspace, stage):
     if not isinstance(artifact_workspace, str) or not artifact_workspace.strip():
@@ -492,12 +550,31 @@ if gate_name == "ui_parity" and status == "accepted":
         raise SystemExit("repair_accepted_report artifact_workspace mismatch.")
     if confirmed_payload.get("may_proceed_to_fix") is not True:
         raise SystemExit("parity_confirmed_report must set may_proceed_to_fix=true.")
+    # 人工批准 token 外部化：confirm 阶段必须由 human-approve.sh 生成匹配 token
+    tokens = state.get("human_approval_tokens") or {}
+    confirm_token = tokens.get("confirm")
+    if not confirm_token or confirmed_payload.get("approval_token") != confirm_token:
+        raise SystemExit("parity_confirmed_report requires a matching human approval token (run scripts/human-approve.sh approve --stage confirm)")
+    # digest 绑定：批准时 artifact 的 sha256 必须与当前 parity_confirmed_report 一致，
+    # 防止 agent 在人工批准后篡改 artifact 内容再回填 token
+    digests = state.get("human_approval_digests") or {}
+    confirm_digest = digests.get("confirm")
+    if not confirm_digest or sha256_of(confirmed_path) != confirm_digest:
+        raise SystemExit("parity_confirmed_report digest does not match the approved artifact (content changed after human approval)")
     if accepted_payload.get("confirmed_by") != "human":
         raise SystemExit("repair_accepted_report requires confirmed_by=human.")
     if accepted_payload.get("all_authorized_repairs_resolved") is not True:
         raise SystemExit(
             "ui_parity=accepted requires all_authorized_repairs_resolved=true in repair_accepted_report."
         )
+    # accept 阶段同样需要匹配的人工批准 token
+    accept_token = tokens.get("accept")
+    if not accept_token or accepted_payload.get("approval_token") != accept_token:
+        raise SystemExit("repair_accepted_report requires a matching human approval token (run scripts/human-approve.sh approve --stage accept)")
+    # accept 阶段同样校验 digest：repair_accepted_report 内容必须与批准时一致
+    accept_digest = digests.get("accept")
+    if not accept_digest or sha256_of(accepted_path) != accept_digest:
+        raise SystemExit("repair_accepted_report digest does not match the approved artifact (content changed after human approval)")
 
     def id_set(value, field):
         if not isinstance(value, list):
@@ -683,11 +760,11 @@ case "$cmd" in
       exit 2
     fi
     rm -f "$STATE_DIR/$SESSION_ID.app-launch.json"
-    write_state "start" "$SESSION_TYPE" "$TASK" "review"
+    write_state "start" "$SESSION_TYPE" "$TASK" "review" ""
     ;;
   configure-gates)
     parse_gate_config_args "$@"
-    write_state "configure-gates" "" "" "$REQUIRED_GATES"
+    write_state "configure-gates" "" "" "$REQUIRED_GATES" ""
     ;;
   environment-health)
     parse_environment_args "$@"
@@ -699,14 +776,15 @@ case "$cmd" in
     ;;
   confirm-plan)
     parse_common_args "$@"
-    write_state "confirm-plan" "" "$TASK"
+    # requirements index.json 在业务项目根（$ROOT），不是 devflow 仓库根（$SOURCE_ROOT）
+    write_state "confirm-plan" "" "$TASK" "" "$ROOT"
     ;;
   approve-commit)
     parse_common_args "$@"
-    write_state "approve-commit" "" "$TASK"
+    write_state "approve-commit" "" "$TASK" "" ""
     ;;
   end)
-    write_state "end" "" ""
+    write_state "end" "" "" "" ""
     ;;
   status)
     if [[ -f "$STATE_FILE" ]]; then

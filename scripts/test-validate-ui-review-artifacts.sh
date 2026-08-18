@@ -193,6 +193,7 @@ write(root / "parity-confirmed.json", {
     "may_proceed_to_fix": True,
     "units_to_fix": ["1:3"],
     "runtime_extras_to_remove": [],
+    "approval_token": "validator-confirm-token",
 })
 verify_path = root / "groups" / "g2" / "repair-verify.json"
 write(verify_path, {
@@ -211,6 +212,7 @@ write(root / "repair-accepted.json", {
     "verification_reports": {"1:3": str(verify_path)},
     "revert_verification_reports": {},
     "all_authorized_repairs_resolved": True,
+    "approval_token": "validator-accept-token",
 })
 PY
 
@@ -407,6 +409,7 @@ accepted_path.write_text(json.dumps({
     "verification_reports": {},
     "revert_verification_reports": {"1:3": str(revert_path)},
     "all_authorized_repairs_resolved": True,
+    "approval_token": "validator-accept-token",
 }) + "\n")
 PY
 /bin/bash "$ROOT/scripts/validate-ui-review-artifacts.sh" \

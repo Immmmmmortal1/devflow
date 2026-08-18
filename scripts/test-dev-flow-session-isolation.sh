@@ -12,7 +12,8 @@ cat > "$TMP_ROOT/bin/app-launch-probe" <<'EOF'
 import json, sys
 print(json.dumps({"producer":"XcodeBuildMCP","schema_version":1,"session_id":sys.argv[1],
                   "status":"available","build_run_device":"success",
-                  "device_transport":"wired","app_launched":True}))
+                  "device_transport":"wired","app_launched":True,
+                  "build_id":"build-test-1","device_id":"device-test-1"}))
 PY
 EOF
 /bin/chmod +x "$TMP_ROOT/bin/app-launch-probe"
@@ -20,6 +21,7 @@ EOF
 run_health_for() {
   local session_id="$1"
   DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID="$session_id" \
+    DEV_FLOW_TEST_MODE=1 \
     DEV_FLOW_APP_LAUNCH_HEALTH_CMD="$TMP_ROOT/bin/app-launch-probe" \
     DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD="/usr/bin/true" \
     DEV_FLOW_REVIEW_MCP_HEALTH_CMD="/usr/bin/true" \

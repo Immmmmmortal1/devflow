@@ -12,7 +12,8 @@ cat > "$TMP_ROOT/bin/app-launch-probe" <<'EOF'
 import json, sys
 print(json.dumps({"producer":"XcodeBuildMCP","schema_version":1,"session_id":sys.argv[1],
                   "status":"available","build_run_device":"success",
-                  "device_transport":"wired","app_launched":True}))
+                  "device_transport":"wired","app_launched":True,
+                  "build_id":"build-test-1","device_id":"device-test-1"}))
 PY
 EOF
 /bin/chmod +x "$TMP_ROOT/bin/app-launch-probe"
@@ -29,6 +30,7 @@ DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=gate-test \
   /bin/bash "$ROOT/scripts/dev-flow-session.sh" start --type feature --task "gate test" >/dev/null
 
 DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=gate-test \
+  DEV_FLOW_TEST_MODE=1 \
   DEV_FLOW_APP_LAUNCH_HEALTH_CMD="$TMP_ROOT/bin/app-launch-probe" \
   DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD=/usr/bin/true \
   DEV_FLOW_REVIEW_MCP_HEALTH_CMD=/usr/bin/true \
@@ -50,13 +52,16 @@ name = Path(sys.argv[1]).stem
 status = sys.argv[2]
 tmp_root = Path(sys.argv[3])
 report = {
-    "producer": "test",
+    "producer": "code-review-workflow" if name == "review" else "test",
     "schema_version": 1,
     "session_id": "gate-test",
     "gate": name,
     "status": status,
     "evidence": f"{name} {status}",
 }
+# review gate 要求 producer=code-review-workflow + reviewer_result 与 status 一致
+if name == "review":
+    report["reviewer_result"] = status
 if name == "figma_ui":
     report["gates"] = {f"G{i}": "pass" for i in range(13)}
     fixture = tmp_root / "g6-fixture"
@@ -187,5 +192,39 @@ assert data["gate_results"]["review"]["status"] == "pass"
 assert data["gate_results"]["runtime"]["status"] == "runtime-verified"
 assert data["commit_approved_at"] is not None
 PY
+
+# requirements index.json 在业务项目根且含 pending-human-approval 时 confirm-plan 被拒
+DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=req-blocked \
+  /bin/bash "$ROOT/scripts/dev-flow-session.sh" start --type feature --task "req blocked" >/dev/null
+/bin/mkdir -p "$TMP_ROOT/.dev-flow/requirements"
+/usr/bin/python3 - "$TMP_ROOT/.dev-flow/requirements/index.json" <<'PY'
+import json, sys
+from pathlib import Path
+Path(sys.argv[1]).write_text(json.dumps({
+    "requirements": [{"id": "req-1", "status": "pending-human-approval"}],
+}) + "\n")
+PY
+DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=req-blocked \
+  DEV_FLOW_TEST_MODE=1 \
+  DEV_FLOW_APP_LAUNCH_HEALTH_CMD="$TMP_ROOT/bin/app-launch-probe" \
+  DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD=/usr/bin/true \
+  DEV_FLOW_REVIEW_MCP_HEALTH_CMD=/usr/bin/true \
+  DEV_FLOW_FIGMA_REST_HEALTH_CMD=/usr/bin/true \
+  /bin/bash "$ROOT/scripts/environment-health-check.sh" run >/dev/null
+if DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=req-blocked \
+  /bin/bash "$ROOT/scripts/dev-flow-session.sh" confirm-plan >/dev/null 2>&1; then
+  echo "FAIL: confirm-plan accepted with pending-human-approval requirements" >&2
+  exit 1
+fi
+# requirements 全部批准后 confirm-plan 应通过
+/usr/bin/python3 - "$TMP_ROOT/.dev-flow/requirements/index.json" <<'PY'
+import json, sys
+from pathlib import Path
+Path(sys.argv[1]).write_text(json.dumps({
+    "requirements": [{"id": "req-1", "status": "approved"}],
+}) + "\n")
+PY
+DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=req-blocked \
+  /bin/bash "$ROOT/scripts/dev-flow-session.sh" confirm-plan >/dev/null
 
 echo "PASS: G0-G12, review, and runtime gates block commit approval until resolved"

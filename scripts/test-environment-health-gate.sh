@@ -21,7 +21,8 @@ cat > "$TMP_ROOT/bin/app-launch-probe" <<'EOF'
 import json, sys
 print(json.dumps({"producer":"XcodeBuildMCP","schema_version":1,"session_id":sys.argv[1],
                   "status":"available","build_run_device":"success",
-                  "device_transport":"wired","app_launched":True}))
+                  "device_transport":"wired","app_launched":True,
+                  "build_id":"build-test-1","device_id":"device-test-1"}))
 PY
 EOF
 /bin/chmod +x "$TMP_ROOT/bin/ok-probe" "$TMP_ROOT/bin/fail-probe" "$TMP_ROOT/bin/app-launch-probe"
@@ -36,6 +37,7 @@ run_health_for() {
   local session_id="$1"
   shift
   DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID="$session_id" \
+    DEV_FLOW_TEST_MODE=1 \
     DEV_FLOW_APP_LAUNCH_HEALTH_CMD="$TMP_ROOT/bin/app-launch-probe" \
     DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD="$TMP_ROOT/bin/ok-probe" \
     DEV_FLOW_REVIEW_MCP_HEALTH_CMD="$TMP_ROOT/bin/ok-probe" \
@@ -49,12 +51,14 @@ record_review_for() {
 import json
 import sys
 from pathlib import Path
+# review gate 要求 producer=code-review-workflow + reviewer_result=pass + schema_version=1
 Path(sys.argv[1]).write_text(json.dumps({
-    "producer": "test",
+    "producer": "code-review-workflow",
     "schema_version": 1,
     "session_id": sys.argv[2],
     "gate": "review",
     "status": "pass",
+    "reviewer_result": "pass",
     "evidence": "test review pass",
 }) + "\n")
 PY
@@ -78,6 +82,7 @@ run_for healthy approve-commit >/dev/null
 
 run_for blocked start --type bug --task "blocked task" >/dev/null
 if DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=blocked \
+  DEV_FLOW_TEST_MODE=1 \
   DEV_FLOW_APP_LAUNCH_HEALTH_CMD="$TMP_ROOT/bin/app-launch-probe" \
   DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD="$TMP_ROOT/bin/fail-probe" \
   DEV_FLOW_REVIEW_MCP_HEALTH_CMD="$TMP_ROOT/bin/ok-probe" \
@@ -93,6 +98,7 @@ fi
 
 run_for invalid-launch start --type ui_review --task "invalid launch evidence" >/dev/null
 if DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=invalid-launch \
+  DEV_FLOW_TEST_MODE=1 \
   DEV_FLOW_APP_LAUNCH_HEALTH_CMD=/usr/bin/true \
   DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD="$TMP_ROOT/bin/ok-probe" \
   DEV_FLOW_REVIEW_MCP_HEALTH_CMD="$TMP_ROOT/bin/ok-probe" \
@@ -118,6 +124,41 @@ assert healthy["commit_approved_at"] is not None
 assert blocked["environment_health"]["status"] == "blocked"
 assert blocked["environment_health"]["checks"]["debugbridge"]["status"] == "blocked"
 assert blocked["confirmed_at"] is None
+PY
+
+# 生产模式（未设 DEV_FLOW_TEST_MODE）下忽略 DEV_FLOW_*_HEALTH_CMD 覆盖，仍走默认探针
+run_for prod-mode start --type feature --task "prod mode health cmd ignored" >/dev/null
+# 先写入合法 app-launch 报告（生产模式 app_launch 走 read-app-launch-report.sh 读这个文件）
+/usr/bin/python3 - "$TMP_ROOT/.dev-flow/sessions/prod-mode.app-launch.json" <<'PY'
+import json, sys
+from pathlib import Path
+Path(sys.argv[1]).write_text(json.dumps({
+    "producer": "XcodeBuildMCP", "schema_version": 1, "session_id": "prod-mode",
+    "status": "available", "build_run_device": "success",
+    "device_transport": "wired", "app_launched": True,
+    "build_id": "build-prod-1", "device_id": "device-prod-1",
+}) + "\n")
+PY
+# 设置 4 个 HEALTH_CMD=/usr/bin/true 但不设 DEV_FLOW_TEST_MODE：应被忽略，走默认探针
+DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=prod-mode \
+  DEV_FLOW_APP_LAUNCH_HEALTH_CMD=/usr/bin/true \
+  DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD=/usr/bin/true \
+  DEV_FLOW_REVIEW_MCP_HEALTH_CMD=/usr/bin/true \
+  DEV_FLOW_FIGMA_REST_HEALTH_CMD=/usr/bin/true \
+  /bin/bash "$ROOT/scripts/environment-health-check.sh" run >/dev/null 2>&1 || true
+/usr/bin/python3 - "$TMP_ROOT/.dev-flow/sessions/prod-mode.json" <<'PY'
+import json, sys
+from pathlib import Path
+state = json.loads(Path(sys.argv[1]).read_text())
+app_launch = state["environment_health"]["checks"]["app_launch"]
+# app_launch 应来自 read-app-launch-report.sh（evidence 含 build_id/device_id），而非 /usr/bin/true（probe_exit_0）
+assert app_launch["status"] == "available", app_launch
+assert "probe_exit_0" not in app_launch["evidence"], app_launch["evidence"]
+assert "build_id=build-prod-1" in app_launch["evidence"], app_launch["evidence"]
+# debugbridge 应来自默认 validate-bridge-session.sh（blocked），而非 /usr/bin/true（probe_exit_0）
+debugbridge = state["environment_health"]["checks"]["debugbridge"]
+assert debugbridge["status"] == "blocked", debugbridge
+assert "probe_exit_0" not in debugbridge["evidence"], debugbridge["evidence"]
 PY
 
 echo "PASS: environment health is recorded and required before confirmation/commit"

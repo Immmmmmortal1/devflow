@@ -633,6 +633,8 @@ def validate_repair(workspace: Path, session_id: str) -> None:
         raise ValidationError("parity confirmation artifact_workspace mismatch")
     if confirmed.get("confirmed_by") != "human" or confirmed.get("may_proceed_to_fix") is not True:
         raise ValidationError("parity confirmation requires human approval and may_proceed_to_fix=true")
+    if not isinstance(confirmed.get("approval_token"), str) or not confirmed.get("approval_token").strip():
+        raise ValidationError("parity confirmation requires approval_token")
     units_to_fix = extract_ids(confirmed.get("units_to_fix", []), "units_to_fix")
     extras_to_remove = extract_ids(
         confirmed.get("runtime_extras_to_remove", []),
@@ -655,6 +657,8 @@ def validate_repair(workspace: Path, session_id: str) -> None:
         raise ValidationError("repair acceptance artifact_workspace mismatch")
     if accepted_payload.get("confirmed_by") != "human":
         raise ValidationError("repair acceptance requires confirmed_by=human")
+    if not isinstance(accepted_payload.get("approval_token"), str) or not accepted_payload.get("approval_token").strip():
+        raise ValidationError("repair acceptance requires approval_token")
     if accepted_payload.get("all_authorized_repairs_resolved") is not True:
         raise ValidationError("repair acceptance is not fully resolved")
 

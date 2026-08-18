@@ -109,6 +109,13 @@ try:
     payload = json.loads(output_path.read_text())
 except (json.JSONDecodeError, OSError):
     payload = {}
+# build_id / device_id 必须是非占位真实值，防止伪造"XcodeBuildMCP 真机启动成功"
+def _non_placeholder(value):
+    return (
+        isinstance(value, str)
+        and bool(value.strip())
+        and value.strip().lower() not in ("unknown", "n/a", "-")
+    )
 valid = (
     exit_code == 0
     and payload.get("producer") == "XcodeBuildMCP"
@@ -118,11 +125,15 @@ valid = (
     and payload.get("build_run_device") == "success"
     and payload.get("device_transport") == "wired"
     and payload.get("app_launched") is True
+    and _non_placeholder(payload.get("build_id"))
+    and _non_placeholder(payload.get("device_id"))
 )
 if valid:
     result = {
         "status": "available",
-        "evidence": "xcodebuildmcp_build_run_device_success;wired;app_launched",
+        "evidence": "xcodebuildmcp_build_run_device_success;wired;app_launched;build_id={};device_id={}".format(
+            payload.get("build_id"), payload.get("device_id")
+        ),
     }
 else:
     result = {
@@ -252,6 +263,14 @@ print(json.dumps({"status": "available", "evidence": evidence}, ensure_ascii=Fal
 PY
   rm -f "$output_file" "$error_file"
 }
+
+# 生产模式（未设置 DEV_FLOW_TEST_MODE=1）下忽略所有自定义健康探针覆盖，防止伪造
+if [[ "${DEV_FLOW_TEST_MODE:-}" != "1" ]]; then
+  if [[ -n "${DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD:-}" || -n "${DEV_FLOW_APP_LAUNCH_HEALTH_CMD:-}" || -n "${DEV_FLOW_REVIEW_MCP_HEALTH_CMD:-}" || -n "${DEV_FLOW_FIGMA_REST_HEALTH_CMD:-}" ]]; then
+    echo "warning: ignoring DEV_FLOW_*_HEALTH_CMD overrides (set DEV_FLOW_TEST_MODE=1 to use them)" >&2
+  fi
+  unset DEV_FLOW_APP_LAUNCH_HEALTH_CMD DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD DEV_FLOW_REVIEW_MCP_HEALTH_CMD DEV_FLOW_FIGMA_REST_HEALTH_CMD
+fi
 
 debug_command="${DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD:-}"
 if [[ -z "$debug_command" ]]; then

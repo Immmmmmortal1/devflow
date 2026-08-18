@@ -12,7 +12,8 @@ cat > "$TMP_ROOT/bin/app-launch-probe" <<'EOF'
 import json, sys
 print(json.dumps({"producer":"XcodeBuildMCP","schema_version":1,"session_id":sys.argv[1],
                   "status":"available","build_run_device":"success",
-                  "device_transport":"wired","app_launched":True}))
+                  "device_transport":"wired","app_launched":True,
+                  "build_id":"build-test-1","device_id":"device-test-1"}))
 PY
 EOF
 /bin/chmod +x "$TMP_ROOT/bin/app-launch-probe"
@@ -29,6 +30,7 @@ DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SES
   /bin/bash "$ROOT/scripts/dev-flow-session.sh" start --type ui_review --task "parity gate" >/dev/null
 
 DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=parity-test \
+  DEV_FLOW_TEST_MODE=1 \
   DEV_FLOW_APP_LAUNCH_HEALTH_CMD="$TMP_ROOT/bin/app-launch-probe" \
   DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD=/usr/bin/true \
   DEV_FLOW_REVIEW_MCP_HEALTH_CMD=/usr/bin/true \
@@ -77,8 +79,25 @@ write(root / "structure" / "minimum-unit-index.json", {
 write(root / "structure" / "structure-sweep-complete.json", {
     **base, "status": "pass", "minimum_unit_count": 1,
 })
-write(root / "groups" / "2985_1" / "detail.json", {**base, "group_id": "2985_1"})
-write(root / "groups" / "2985_1" / "detail-review.json", {**base, "verdict": "pass"})
+write(root / "structure" / "structure-review.json", {
+    **base, "status": "pass", "run_id": "structure-run-1",
+    "role": "structure", "verdict": "pass", "reviewed_at": "2026-08-13T00:00:00Z",
+    "summary": "structure review pass",
+})
+write(root / "groups" / "2985_1" / "detail.json", {
+    **base, "group_id": "2985_1", "split_status": "complete",
+    "minimum_units": [{
+        "figma_id": "2985:1", "group_id": "2985_1", "name": "icon", "unit_kind": "image",
+        "anchor": "figma.2985_1", "is_minimum_unit": True, "asset_collapse_eligible": True,
+        "has_localizable_text": False, "has_interaction": False,
+        "split_status": "complete", "pending_child_ids": [],
+    }],
+})
+write(root / "groups" / "2985_1" / "detail-review.json", {
+    **base, "group_id": "2985_1", "status": "pass", "run_id": "detail-run-2985-1",
+    "role": "detail", "verdict": "pass", "reviewed_at": "2026-08-13T00:00:00Z",
+    "summary": "detail review pass",
+})
 image_evidence = {
     "runtime_path": "runtime/2985_1.json",
     "figma_sha256": "a" * 64,
@@ -131,6 +150,7 @@ confirmed = {
     "may_proceed_to_fix": True,
     "units_to_fix": ["2985:1"],
     "runtime_extras_to_remove": [],
+    "approval_token": "parity-confirm-token",
 }
 (root / "parity-confirmed.json").write_text(json.dumps(confirmed) + "\n")
 verify = {
@@ -162,6 +182,7 @@ acceptance = {
     "verification_reports": {"2985:1": str(verify_path)},
     "revert_verification_reports": {},
     "all_authorized_repairs_resolved": True,
+    "approval_token": "parity-accept-token",
 }
 (root / "repair-accepted.json").write_text(json.dumps(acceptance) + "\n")
 PY
@@ -301,6 +322,23 @@ if run_for approve-commit >/dev/null 2>&1; then
   exit 1
 fi
 
+# 写入人工批准 token + digest，供 ui_parity=accepted 强校验匹配（测试绕过 TTY 交互直接写 state）
+/usr/bin/python3 - "$TMP_ROOT/.dev-flow/sessions/parity-test.json" "$TMP_ROOT/artifacts" <<'PY'
+import hashlib, json, sys
+from pathlib import Path
+state_path = Path(sys.argv[1])
+workspace = Path(sys.argv[2])
+state = json.loads(state_path.read_text())
+state["human_approval_tokens"] = {"confirm": "parity-confirm-token", "accept": "parity-accept-token"}
+state["human_approved_at"] = {"confirm": "2026-08-18T00:00:00Z", "accept": "2026-08-18T00:00:01Z"}
+# digest 绑定：与 parity-confirmed.json / repair-accepted.json 当前内容 sha256 一致
+state["human_approval_digests"] = {
+    "confirm": hashlib.sha256((workspace / "parity-confirmed.json").read_bytes()).hexdigest(),
+    "accept": hashlib.sha256((workspace / "repair-accepted.json").read_bytes()).hexdigest(),
+}
+state_path.write_text(json.dumps(state) + "\n")
+PY
+
 run_for record-gate --name ui_parity --report "$TMP_ROOT/ui_parity.json" >/dev/null
 run_for approve-commit >/dev/null
 
@@ -321,6 +359,7 @@ DEV_FLOW_SESSION_ID=parity-read-only \
   DEV_FLOW_FIGMA_REST_HEALTH_CMD=/usr/bin/true \
   /bin/bash "$ROOT/scripts/dev-flow-session.sh" start --type ui_review --task "read only" >/dev/null
 DEV_FLOW_SESSION_ID=parity-read-only \
+  DEV_FLOW_TEST_MODE=1 \
   DEV_FLOW_APP_LAUNCH_HEALTH_CMD="$TMP_ROOT/bin/app-launch-probe" \
   DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD=/usr/bin/true \
   DEV_FLOW_REVIEW_MCP_HEALTH_CMD=/usr/bin/true \
@@ -366,6 +405,7 @@ Path(sys.argv[1]).write_text(json.dumps({
     "route": "ui-review-read-only",
     "source_edits": False,
     "status": "pass",
+    "reviewer_result": "pass",
     "artifact_workspace": str(workspace),
     "artifact_validation_report": str(workspace / "artifact-validation.json"),
     "evidence": "whole-page parity artifacts validated",
