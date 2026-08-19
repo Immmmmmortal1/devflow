@@ -109,7 +109,8 @@ if name == "figma_ui":
         'view.accessibilityIdentifier = "figma.2985_24400"\n',
         encoding="utf-8",
     )
-    g6_report = tmp_root / "g6-validation.json"
+    # g6 报告必须位于 artifact workspace 内（阶段四路径约束）
+    g6_report = fixture / "g6-validation.json"
     g6_report.write_text(
         json.dumps(
             {

@@ -34,15 +34,20 @@ def merge_cursor(config_path: Path, npx_path: str, workflows: str, tool_timeout_
     return True
 
 
+def toml_quote(value: str) -> str:
+    """TOML 双引号字符串转义，防止路径中的引号/反斜杠破坏配置结构"""
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def merge_codex(config_path: Path, npx_path: str, workflows: str, tool_timeout_sec: int) -> bool:
     block_lines = [
         f"[mcp_servers.{SERVER_KEY}]",
-        f'command = "{npx_path}"',
+        f'command = "{toml_quote(npx_path)}"',
         'args = ["-y", "xcodebuildmcp@latest", "mcp"]',
         f"tool_timeout_sec = {tool_timeout_sec}.0",
         "",
         f"[mcp_servers.{SERVER_KEY}.env]",
-        f'XCODEBUILDMCP_ENABLED_WORKFLOWS = "{workflows}"',
+        f'XCODEBUILDMCP_ENABLED_WORKFLOWS = "{toml_quote(workflows)}"',
     ]
     block = "\n".join(block_lines) + "\n"
 

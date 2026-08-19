@@ -33,8 +33,16 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-mapfile -t mcp_pids < <(pgrep -f 'UI-dbugbridge-mcp.*server\.js|node.*UI-dbugbridge-mcp.*server\.js' 2>/dev/null || true)
-mapfile -t iproxy_pids < <(pgrep -f 'iproxy -u' 2>/dev/null || true)
+# 兼容 macOS 默认 Bash 3.2（无 mapfile/readarray），用 while/read 收集 PID
+mcp_pids=()
+while IFS= read -r pid; do
+  mcp_pids+=("$pid")
+done < <(pgrep -f 'UI-dbugbridge-mcp.*server\.js|node.*UI-dbugbridge-mcp.*server\.js' 2>/dev/null || true)
+
+iproxy_pids=()
+while IFS= read -r pid; do
+  iproxy_pids+=("$pid")
+done < <(pgrep -f 'iproxy -u' 2>/dev/null || true)
 
 echo "DebugBridge cleanup"
 echo "  MCP server processes: ${#mcp_pids[@]}"

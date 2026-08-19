@@ -100,7 +100,8 @@ def main() -> int:
         candidates.append(("codex", Path.home() / ".codex" / "config.toml"))
 
     present = False
-    workflows: set[str] = set()
+    # 每个平台的 workflows 独立记录，禁止跨平台合并（实际运行的 MCP host 只用一个配置）
+    platform_workflows: dict[str, set[str]] = {}
     details: list[str] = []
     for platform, config_path in candidates:
         if platform == "cursor":
@@ -110,10 +111,12 @@ def main() -> int:
         details.append(detail)
         if ok:
             present = True
-            workflows |= found
+            platform_workflows[platform] = found
 
+    # 项目级配置是辅助补充，只叠加到每个已配置的平台，不参与跨平台合并
     if project_workflows:
-        workflows |= project_workflows
+        for platform in list(platform_workflows):
+            platform_workflows[platform] |= project_workflows
 
     if not present:
         print("status=missing")
@@ -121,15 +124,17 @@ def main() -> int:
             print(f"detail={detail}")
         return 1
 
-    missing = sorted(REQUIRED_WORKFLOWS - workflows)
+    # 任一平台单独满足全部必需 workflow 才算通过
+    best = max(platform_workflows.values(), key=len, default=set())
+    missing = sorted(REQUIRED_WORKFLOWS - best)
     if missing:
         print("status=incomplete")
-        print(f"workflows={','.join(sorted(workflows))}")
+        print(f"workflows={','.join(sorted(best))}")
         print(f"missing={','.join(missing)}")
         return 1
 
     print("status=ok")
-    print(f"workflows={','.join(sorted(workflows))}")
+    print(f"workflows={','.join(sorted(best))}")
     return 0
 
 

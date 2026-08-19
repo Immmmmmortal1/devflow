@@ -33,16 +33,21 @@ def merge_cursor(config_path: Path, wrapper_path: str, pythonpath: str) -> bool:
     return True
 
 
+def toml_quote(value: str) -> str:
+    """TOML 双引号字符串转义，防止路径中的引号/反斜杠破坏配置结构"""
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def merge_codex(config_path: Path, wrapper_path: str, pythonpath: str) -> bool:
     block_lines = [
         "[mcp_servers.orchestrator_mcp]",
-        f'command = "{Path(wrapper_path).expanduser()}"',
+        f'command = "{toml_quote(str(Path(wrapper_path).expanduser()))}"',
         "args = []",
         "startup_timeout_sec = 120.0",
         "",
         "[mcp_servers.orchestrator_mcp.env]",
         'ORCHESTRATOR_MCP_TRANSPORT = "stdio"',
-        f'PYTHONPATH = "{Path(pythonpath).expanduser()}"',
+        f'PYTHONPATH = "{toml_quote(str(Path(pythonpath).expanduser()))}"',
     ]
     block = "\n".join(block_lines) + "\n"
 

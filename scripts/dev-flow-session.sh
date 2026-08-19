@@ -131,6 +131,28 @@ TRIVIAL_FORBIDDEN_GATES = ("runtime", "figma_ui", "ui_parity")
 if level and level not in VALID_LEVELS:
     raise SystemExit("Invalid level. Use trivial, standard, or heavy.")
 
+
+def atomic_write(path, data):
+    """原子写 session state：临时文件 + os.replace，权限 0600；拒绝 symlink 目标"""
+    import os
+    import tempfile
+
+    if path.is_symlink():
+        raise SystemExit("refusing to write session state through a symlink")
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".state-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, str(path))
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
 if action == "start":
     data = {
         "session_id": session_id,
@@ -240,18 +262,38 @@ elif action == "end":
 else:
     raise SystemExit(f"Unsupported action: {action}")
 
-path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+atomic_write(path, data)
 print(path)
 PY
 }
 
-record_environment() {
-  local report_file="$1"
-  mkdir -p "$STATE_DIR"
-  /usr/bin/python3 - "$STATE_FILE" "$SESSION_ID" "$report_file" "$(now_utc)" <<'PY'
+ record_environment() {
+   local report_file="$1"
+   mkdir -p "$STATE_DIR"
+   /usr/bin/python3 - "$STATE_FILE" "$SESSION_ID" "$report_file" "$(now_utc)" <<'PY'
 import json
+import os
 import sys
+import tempfile
 from pathlib import Path
+
+def atomic_write(path, data):
+    """原子写 session state：临时文件 + os.replace，权限 0600；拒绝 symlink 目标"""
+    if path.is_symlink():
+        raise SystemExit("refusing to write session state through a symlink")
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".state-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, str(path))
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 state_path = Path(sys.argv[1])
 session_id = sys.argv[2]
@@ -300,7 +342,7 @@ state["environment_health"] = {
     "checks": checks,
 }
 state["session_id"] = session_id
-state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n")
+atomic_write(state_path, state)
 print(state_path)
 if derived_status != "available":
     raise SystemExit(1)
@@ -314,9 +356,30 @@ record_gate() {
   /usr/bin/python3 - "$STATE_FILE" "$SESSION_ID" "$gate_name" "$report_file" "$(now_utc)" "$SOURCE_ROOT" <<'PY'
 import hashlib
 import json
+import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
+
+
+def atomic_write(path, data):
+    """原子写 session state：临时文件 + os.replace，权限 0600；拒绝 symlink 目标"""
+    if path.is_symlink():
+        raise SystemExit("refusing to write session state through a symlink")
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".state-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, str(path))
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 state_path = Path(sys.argv[1])
 session_id = sys.argv[2]
@@ -681,7 +744,12 @@ if gate_name == "figma_ui" and status == "pass":
     g6_report = report.get("g6_validation_report")
     if not isinstance(g6_report, str) or not g6_report.strip():
         raise SystemExit("figma_ui=pass requires g6_validation_report path.")
-    g6_report_path = Path(g6_report).expanduser()
+    # g6 报告路径必须位于 artifact workspace 内，防止引用外部伪造报告
+    g6_report_path = Path(g6_report).expanduser().resolve()
+    try:
+        g6_report_path.relative_to(Path(artifact_workspace).expanduser().resolve())
+    except ValueError:
+        raise SystemExit("g6_validation_report must be inside artifact_workspace.")
     if not g6_report_path.is_file():
         raise SystemExit("figma_ui=pass requires an existing g6_validation_report file.")
     try:
@@ -701,7 +769,7 @@ state.setdefault("gate_results", {})[gate_name] = {
     "report": str(report_path),
 }
 state["session_id"] = session_id
-state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n")
+atomic_write(state_path, state)
 print(state_path)
 PY
 }

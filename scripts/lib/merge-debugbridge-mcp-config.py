@@ -58,18 +58,23 @@ def merge_cursor(config_path: Path, server_path: str, node_path: str, udid: str)
     return True
 
 
+def toml_quote(value: str) -> str:
+    """TOML 双引号字符串转义，防止路径中的引号/反斜杠破坏配置结构"""
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def merge_codex(config_path: Path, server_path: str, node_path: str, udid: str) -> bool:
     block_lines = [
         "[mcp_servers.ui_dbugbridge_mcp]",
-        f'command = "{node_path}"',
-        f'args = ["{Path(server_path).expanduser()}"]',
+        f'command = "{toml_quote(node_path)}"',
+        f'args = ["{toml_quote(str(Path(server_path).expanduser()))}"]',
         "startup_timeout_sec = 30.0",
         "",
         "[mcp_servers.ui_dbugbridge_mcp.env]",
         'IPROXY_PATH = "iproxy"',
     ]
     if udid:
-        block_lines.append(f'LOOKDEBUG_DEVICE_UDID = "{udid}"')
+        block_lines.append(f'LOOKDEBUG_DEVICE_UDID = "{toml_quote(udid)}"')
     block = "\n".join(block_lines) + "\n"
 
     if not config_path.is_file():
