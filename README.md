@@ -48,9 +48,22 @@ bash scripts/install-dev-flow.sh --project /path/to/YourApp
 
 ```bash
 bash /path/to/devflow/scripts/dev-flow.sh session start --type bug --task "label"
+bash /path/to/devflow/scripts/dev-flow.sh session start --type feature --level heavy --task "label"
 bash /path/to/devflow/scripts/dev-flow.sh record-app-launch record
 bash /path/to/devflow/scripts/dev-flow.sh environment-health run
 ```
+
+## 任务复杂度分级（--level）
+
+`session start` 支持 `--level trivial|standard|heavy`（默认 `standard`），决定环境门必需的检查项：
+
+| level | 适用场景 | 环境门必需项 | 门禁限制 |
+|---|---|---|---|
+| `trivial` | 文案 / typo / 纯逻辑微调 | 仅 `review_mcp` | 仅 `review` 门；`configure-gates` 禁止加 `runtime`/`figma_ui`/`ui_parity` |
+| `standard` | 普通 feature / bug | `app_launch` + `review_mcp` | 无 |
+| `heavy` | 新 Figma UI / `ui_review` | 全 4 项 | 无 |
+
+非必需检查项在环境报告中标记为 `not-required`，不参与最终 `available` 判定。旧 session（无 level 字段）按 `heavy` 全查兼容。
 
 本仓库是 skill / 脚本的源码真相源（source of truth）。`install-dev-flow.sh` 会把 skills 链到本机 `~/.codex/skills` 或 `~/.cursor/skills`。
 
@@ -157,9 +170,9 @@ Step1 分类、Step2 比对、Step3 修复复验都必须引用该段，不得�
 
 ```bash
 # 启动（按 DEV_FLOW_SESSION_ID → CODEX_THREAD_ID → CURSOR_CONVERSATION_ID 隔离）
-bash scripts/dev-flow-session.sh start --type feature|bug|ui_review --task "short label"
+bash scripts/dev-flow-session.sh start --type feature|bug|ui_review --level trivial|standard|heavy --task "short label"
 
-# 环境四项：App 启动预检 + DebugBridge + Review MCP + figma-rest-api
+# 环境检查（按会话 level 裁剪必需项；非必需项 not-required，不参与判定）
 bash scripts/environment-health-check.sh run
 
 # 配置条件门禁后 confirm / approve-commit

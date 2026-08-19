@@ -27,7 +27,7 @@ DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SES
   DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD=/usr/bin/true \
   DEV_FLOW_REVIEW_MCP_HEALTH_CMD=/usr/bin/true \
   DEV_FLOW_FIGMA_REST_HEALTH_CMD=/usr/bin/true \
-  /bin/bash "$ROOT/scripts/dev-flow-session.sh" start --type ui_review --task "parity gate" >/dev/null
+  /bin/bash "$ROOT/scripts/dev-flow-session.sh" start --type ui_review --level heavy --task "parity gate" >/dev/null
 
 DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=parity-test \
   DEV_FLOW_TEST_MODE=1 \
@@ -357,7 +357,7 @@ DEV_FLOW_SESSION_ID=parity-read-only \
   DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD=/usr/bin/true \
   DEV_FLOW_REVIEW_MCP_HEALTH_CMD=/usr/bin/true \
   DEV_FLOW_FIGMA_REST_HEALTH_CMD=/usr/bin/true \
-  /bin/bash "$ROOT/scripts/dev-flow-session.sh" start --type ui_review --task "read only" >/dev/null
+  /bin/bash "$ROOT/scripts/dev-flow-session.sh" start --type ui_review --level heavy --task "read only" >/dev/null
 DEV_FLOW_SESSION_ID=parity-read-only \
   DEV_FLOW_TEST_MODE=1 \
   DEV_FLOW_APP_LAUNCH_HEALTH_CMD="$TMP_ROOT/bin/app-launch-probe" \

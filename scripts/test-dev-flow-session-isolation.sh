@@ -38,7 +38,7 @@ run_for() {
 run_for thread-a start --type feature --task "task a" >/dev/null
 run_for thread-b start --type bug --task "task b" >/dev/null
 run_for thread-feature-ui start --type feature --task "new ui feature" >/dev/null
-run_for thread-review start --type ui_review --task "ui review" >/dev/null
+run_for thread-review start --type ui_review --level heavy --task "ui review" >/dev/null
 if run_for thread-invalid start --type ui_new --task "must be rejected" >/dev/null 2>&1; then
   echo "FAIL: ui_new must not be an independent session type" >&2
   exit 1
@@ -50,7 +50,7 @@ run_for thread-a end >/dev/null
 # Cursor conversation ids must isolate without DEV_FLOW_SESSION_ID / CODEX_THREAD_ID.
   CURSOR_CONVERSATION_ID=bd225fc5-4f36-47e2-876e-8d9d125033a1 \
   DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" \
-  /bin/bash "$ROOT/scripts/dev-flow-session.sh" start --type ui_review --task "cursor chat a" >/dev/null
+  /bin/bash "$ROOT/scripts/dev-flow-session.sh" start --type ui_review --level heavy --task "cursor chat a" >/dev/null
 CURSOR_CONVERSATION_ID=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee \
   DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" \
   /bin/bash "$ROOT/scripts/dev-flow-session.sh" start --type bug --task "cursor chat b" >/dev/null

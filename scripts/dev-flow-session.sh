@@ -13,7 +13,7 @@ STATE_FILE="$STATE_DIR/$SESSION_ID.json"
 usage() {
   cat <<'EOF'
 Usage:
-  scripts/dev-flow-session.sh start --type bug|feature|ui_review [--task "label"]
+  scripts/dev-flow-session.sh start --type bug|feature|ui_review [--level trivial|standard|heavy] [--task "label"]
   scripts/dev-flow-session.sh configure-gates --required <comma-separated gates>
   scripts/dev-flow-session.sh environment-health --report <path>
   scripts/dev-flow-session.sh record-gate --name figma_ui|review|runtime|ui_parity --report <path>
@@ -28,6 +28,11 @@ Session selection:
 Gate note:
   ui_review source repair requires review,runtime,ui_parity before confirm-plan.
   Environment health must run before confirm-plan and cannot be updated after confirmation.
+Task level (--level, only meaningful for start):
+  trivial   - 文案/typo/纯逻辑微调专用轻量通道；环境门只要求 review_mcp；仅 review 门；
+              configure-gates 禁止加 runtime/figma_ui/ui_parity。
+  standard  - 默认；环境门要求 app_launch + review_mcp。
+  heavy     - 新 Figma UI / ui_review；环境门全 4 项（app_launch, debugbridge, review_mcp, figma_rest_api）。
 EOF
 }
 
@@ -38,6 +43,7 @@ now_utc() {
 parse_common_args() {
   SESSION_TYPE=""
   TASK=""
+  SESSION_LEVEL="standard"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --type)
@@ -46,6 +52,10 @@ parse_common_args() {
         ;;
       --task)
         TASK="${2:-}"
+        shift 2
+        ;;
+      --level)
+        SESSION_LEVEL="${2:-}"
         shift 2
         ;;
       -h|--help)
@@ -67,8 +77,9 @@ write_state() {
   local task="${3:-}"
   local required_gates="${4:-}"
   local project_root="${5:-}"
+  local level="${6:-}"
   mkdir -p "$STATE_DIR"
-  /usr/bin/python3 - "$STATE_FILE" "$SESSION_ID" "$action" "$session_type" "$task" "$required_gates" "$(now_utc)" "$project_root" <<'PY'
+  /usr/bin/python3 - "$STATE_FILE" "$SESSION_ID" "$action" "$session_type" "$task" "$required_gates" "$(now_utc)" "$project_root" "$level" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -81,6 +92,7 @@ task = sys.argv[5]
 required_gates_arg = sys.argv[6]
 timestamp = sys.argv[7]
 project_root = sys.argv[8]
+level = sys.argv[9]
 
 all_gates = ("figma_ui", "review", "runtime", "ui_parity")
 required_gates = [item for item in required_gates_arg.split(",") if item]
@@ -113,12 +125,19 @@ if path.exists():
     except json.JSONDecodeError:
         data = {}
 
+VALID_LEVELS = ("trivial", "standard", "heavy")
+TRIVIAL_FORBIDDEN_GATES = ("runtime", "figma_ui", "ui_parity")
+# 空 level 仅出现在非 start 命令（configure-gates/confirm 等），不校验；start 必须传合法 level
+if level and level not in VALID_LEVELS:
+    raise SystemExit("Invalid level. Use trivial, standard, or heavy.")
+
 if action == "start":
     data = {
         "session_id": session_id,
         "active": True,
         "type": session_type,
         "task": task,
+        "level": level,
         "started_at": timestamp,
         "confirmed_at": None,
         "commit_approved_at": None,
@@ -136,6 +155,14 @@ elif action == "configure-gates":
         raise SystemExit("No active dev-flow session. Run start first.")
     if data.get("confirmed_at"):
         raise SystemExit("Required gates cannot change after plan confirmation.")
+    # trivial 会话禁止加 runtime/figma_ui/ui_parity，防止绕过轻量通道
+    if data.get("level") == "trivial" and any(g in TRIVIAL_FORBIDDEN_GATES for g in required_gates):
+        raise SystemExit("trivial sessions may only configure the review gate.")
+    # 重型 gate（runtime/figma_ui/ui_parity）要求 heavy 环境门，防止 standard 环境检查不足
+    if data.get("level") != "heavy" and any(g in TRIVIAL_FORBIDDEN_GATES for g in required_gates):
+        raise SystemExit(
+            "runtime/figma_ui/ui_parity gates require a heavy session (restart with start --level heavy)."
+        )
     data["required_gates"] = required_gates
     data["gate_results"] = make_gate_results(required_gates)
     data["session_id"] = session_id
@@ -236,6 +263,11 @@ if not state_path.exists():
 state = json.loads(state_path.read_text())
 if not state.get("active"):
     raise SystemExit("No active dev-flow session. Run start first.")
+# 轻量防伪：环境健康报告必须位于本会话 state 目录内（environment-health-check.sh 的临时产出）
+try:
+    report_path.resolve().relative_to(state_path.resolve().parent)
+except ValueError:
+    raise SystemExit("Environment report must live inside the session state directory.")
 # plan 确认后禁止更新环境健康，避免确认后环境状态漂移
 if state.get("confirmed_at"):
     raise SystemExit("Environment health cannot be updated after plan confirmation.")
@@ -245,9 +277,18 @@ if report.get("producer") != "environment-health-check" or report.get("schema_ve
 if report.get("session_id") != session_id:
     raise SystemExit("Environment report belongs to another session.")
 checks = report.get("checks")
-required = ("app_launch", "debugbridge", "review_mcp", "figma_rest_api")
-if not isinstance(checks, dict) or any(name not in checks for name in required):
+# 按会话 level 裁剪必需检查项：trivial 只要求 review_mcp；standard 要求 app_launch+review_mcp；heavy 全 4 项
+LEVEL_CHECKS = {
+    "trivial": ("review_mcp",),
+    "standard": ("app_launch", "review_mcp"),
+    "heavy": ("app_launch", "debugbridge", "review_mcp", "figma_rest_api"),
+}
+level = state.get("level", "heavy")
+required = LEVEL_CHECKS.get(level, LEVEL_CHECKS["heavy"])
+all_checks = ("app_launch", "debugbridge", "review_mcp", "figma_rest_api")
+if not isinstance(checks, dict) or any(name not in checks for name in all_checks):
     raise SystemExit("Environment report is missing required checks.")
+# 必需项必须存在且状态合法；非必需项允许 not-required
 if any(checks[name].get("status") not in ("available", "blocked", "not-run") for name in required):
     raise SystemExit("Environment report contains an invalid check status.")
 derived_status = "available" if all(checks[name].get("status") == "available" for name in required) else "blocked"
@@ -759,12 +800,21 @@ case "$cmd" in
       echo "start requires --type bug|feature|ui_review" >&2
       exit 2
     fi
+    # --level 缺值拒绝（空字符串）；ui_review 必须 heavy，防止绕过真机/DebugBridge/Figma 环境门
+    if [[ -z "$SESSION_LEVEL" ]]; then
+      echo "start --level requires a value (trivial|standard|heavy)" >&2
+      exit 2
+    fi
+    if [[ "$SESSION_TYPE" == "ui_review" && "$SESSION_LEVEL" != "heavy" ]]; then
+      echo "ui_review requires --level heavy (full environment checks)" >&2
+      exit 2
+    fi
     rm -f "$STATE_DIR/$SESSION_ID.app-launch.json"
-    write_state "start" "$SESSION_TYPE" "$TASK" "review" ""
+    write_state "start" "$SESSION_TYPE" "$TASK" "review" "" "$SESSION_LEVEL"
     ;;
   configure-gates)
     parse_gate_config_args "$@"
-    write_state "configure-gates" "" "" "$REQUIRED_GATES" ""
+    write_state "configure-gates" "" "" "$REQUIRED_GATES" "" ""
     ;;
   environment-health)
     parse_environment_args "$@"
@@ -777,14 +827,14 @@ case "$cmd" in
   confirm-plan)
     parse_common_args "$@"
     # requirements index.json 在业务项目根（$ROOT），不是 devflow 仓库根（$SOURCE_ROOT）
-    write_state "confirm-plan" "" "$TASK" "" "$ROOT"
+    write_state "confirm-plan" "" "$TASK" "" "$ROOT" ""
     ;;
   approve-commit)
     parse_common_args "$@"
-    write_state "approve-commit" "" "$TASK" "" ""
+    write_state "approve-commit" "" "$TASK" "" "" ""
     ;;
   end)
-    write_state "end" "" "" "" ""
+    write_state "end" "" "" "" "" ""
     ;;
   status)
     if [[ -f "$STATE_FILE" ]]; then

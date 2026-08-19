@@ -52,7 +52,7 @@ bash scripts/install-dev-flow.sh --project <ios-app-root>
 | Route / condition | Required skill | Owns |
 |---|---|---|
 | Every task | `code-grounded` | evidence, scope, classification |
-| First gate of every first-class route | `environment-health-check` | physical App launch preflight plus DebugBridge, Review MCP, and `figma-rest-api` availability |
+| First gate of every first-class route | `environment-health-check` | physical App launch preflight plus DebugBridge, Review MCP, and `figma-rest-api` availability, trimmed by session level |
 | `feature` | `feature-workflow` | feature analysis and execution plan |
 | `bug` | `bug-workflow` | bug analysis and repair plan |
 | Stateful behavior | `requirements-closure` | closed state chain and requirements artifact |
@@ -76,8 +76,16 @@ procedures into this file.
 Read `code-grounded`, then start the task-scoped mechanical gate:
 
 ```bash
-bash scripts/dev-flow-session.sh start --type bug|feature|ui_review --task "short label"
+bash scripts/dev-flow-session.sh start --type bug|feature|ui_review --level trivial|standard|heavy --task "short label"
 ```
+
+Task level (`--level`, only meaningful for `start`):
+
+- `trivial` — 文案 / typo / 纯逻辑微调专用轻量通道；环境门只要求 `review_mcp`；仅 `review` 门；`configure-gates` 禁止加 `runtime`/`figma_ui`/`ui_parity`。
+- `standard` — 默认；环境门要求 `app_launch` + `review_mcp`。
+- `heavy` — 新 Figma UI / `ui_review`；环境门全 4 项（`app_launch`、`debugbridge`、`review_mcp`、`figma_rest_api`）。
+
+环境健康检查按会话 level 只执行必需探针，非必需项在报告中标记为 `not-required` 且不参与最终 `available` 判定。
 
 The script must isolate state by `DEV_FLOW_SESSION_ID`, then `CODEX_THREAD_ID`, then
 `CURSOR_CONVERSATION_ID`. Outside Cursor it may fall back to `local`; inside Cursor
@@ -139,19 +147,19 @@ Gate scripts live only in the devflow git clone. App repos keep `.dev-flow/sessi
 Initialize once with `dev-flow-init-project.sh <app-root>` after clone; `git pull` devflow updates
 every project automatically without per-app script copies.
 
-The command writes the four results into `.dev-flow/sessions/<session-id>.json`. It exits non-zero
-when any capability is unavailable.
+The command writes the results into `.dev-flow/sessions/<session-id>.json`. It exits non-zero
+when any required capability is unavailable.
 
-All four checks must return `available`:
+Required checks depend on the session level (`--level`, default `standard`):
 
-- current App physical-device build/install/launch preflight;
-- DebugBridge health and connectivity;
-- Review MCP current-session health, or `gstack-review` fallback when orchestrator MCP is unavailable;
-- `figma-rest-api` Skill presence and read-only authentication check.
+- `trivial` — `review_mcp` only;
+- `standard` — `app_launch` + `review_mcp`;
+- `heavy` — all four (`app_launch`, `debugbridge`, `review_mcp`, `figma_rest_api`).
 
-If any result is `blocked` or `not-run`, stop before the selected route starts and report the exact
-environment blocker. Do not use a route-specific fallback to bypass this gate, except the built-in
-Review MCP → `gstack-review` (`/review`) fallback recorded by `scripts/review-health-probe.sh`.
+Non-required checks are recorded as `not-required` and do not affect the final status. If any
+required result is `blocked` or `not-run`, stop before the selected route starts and report the
+exact environment blocker. Do not use a route-specific fallback to bypass this gate, except the
+built-in Review MCP → `gstack-review` (`/review`) fallback recorded by `scripts/review-health-probe.sh`.
 
 ### 3. Activate conditional skills
 
@@ -267,7 +275,7 @@ bash scripts/dev-flow-session.sh end
 ## Hard rules
 
 1. No source edits before `confirm-gate` and `confirm-plan`.
-2. Every first-class route must pass `environment-health-check` before its route skill starts.
+2. Every first-class route must pass `environment-health-check` (per its session level's required checks) before its route skill starts.
 3. A blocked or unrun environment check cannot be bypassed by selecting another route or fallback,
    except Review MCP health may fall back to `gstack-review` (`/review`) through
    `scripts/review-health-probe.sh`.
@@ -294,7 +302,7 @@ bash scripts/dev-flow-session.sh end
 ```text
 classify
 → feature | bug | ui_review
-→ environment-health-check [all four available: app_launch + debugbridge + review_mcp + figma_rest_api]
+→ environment-health-check [required checks per session level: trivial=review_mcp / standard=app_launch+review_mcp / heavy=all four]
 → requirements-closure? → localization-workflow? → api-contract? → zentao-bug-gate?
 → confirm-gate (required before first source edit)
 → feature: figma-ui-gates? → implement

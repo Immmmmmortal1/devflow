@@ -80,7 +80,7 @@ fi
 record_review_for healthy
 run_for healthy approve-commit >/dev/null
 
-run_for blocked start --type bug --task "blocked task" >/dev/null
+run_for blocked start --type bug --level heavy --task "blocked task" >/dev/null
 if DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=blocked \
   DEV_FLOW_TEST_MODE=1 \
   DEV_FLOW_APP_LAUNCH_HEALTH_CMD="$TMP_ROOT/bin/app-launch-probe" \
@@ -96,7 +96,7 @@ if run_for blocked confirm-plan >/dev/null 2>&1; then
   exit 1
 fi
 
-run_for invalid-launch start --type ui_review --task "invalid launch evidence" >/dev/null
+run_for invalid-launch start --type ui_review --level heavy --task "invalid launch evidence" >/dev/null
 if DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=invalid-launch \
   DEV_FLOW_TEST_MODE=1 \
   DEV_FLOW_APP_LAUNCH_HEALTH_CMD=/usr/bin/true \
@@ -118,7 +118,9 @@ healthy = json.loads((root / "healthy.json").read_text())
 blocked = json.loads((root / "blocked.json").read_text())
 assert healthy["environment_health"]["status"] == "available"
 assert healthy["environment_health"]["checks"]["app_launch"]["status"] == "available"
-assert healthy["environment_health"]["checks"]["debugbridge"]["status"] == "available"
+# standard 级别不查 debugbridge/figma（not-required），只要求 app_launch + review_mcp
+assert healthy["environment_health"]["checks"]["debugbridge"]["status"] == "not-required"
+assert healthy["environment_health"]["checks"]["figma_rest_api"]["status"] == "not-required"
 assert healthy["confirmed_at"] is not None
 assert healthy["commit_approved_at"] is not None
 assert blocked["environment_health"]["status"] == "blocked"
@@ -127,7 +129,8 @@ assert blocked["confirmed_at"] is None
 PY
 
 # 生产模式（未设 DEV_FLOW_TEST_MODE）下忽略 DEV_FLOW_*_HEALTH_CMD 覆盖，仍走默认探针
-run_for prod-mode start --type feature --task "prod mode health cmd ignored" >/dev/null
+# 用 heavy 级别验证全 4 项都走默认探针
+run_for prod-mode start --type feature --level heavy --task "prod mode health cmd ignored" >/dev/null
 # 先写入合法 app-launch 报告（生产模式 app_launch 走 read-app-launch-report.sh 读这个文件）
 /usr/bin/python3 - "$TMP_ROOT/.dev-flow/sessions/prod-mode.app-launch.json" <<'PY'
 import json, sys

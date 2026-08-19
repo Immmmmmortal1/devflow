@@ -27,7 +27,7 @@ DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=gate-test \
   DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD=/usr/bin/true \
   DEV_FLOW_REVIEW_MCP_HEALTH_CMD=/usr/bin/true \
   DEV_FLOW_FIGMA_REST_HEALTH_CMD=/usr/bin/true \
-  /bin/bash "$ROOT/scripts/dev-flow-session.sh" start --type feature --task "gate test" >/dev/null
+  /bin/bash "$ROOT/scripts/dev-flow-session.sh" start --type feature --level heavy --task "gate test" >/dev/null
 
 DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=gate-test \
   DEV_FLOW_TEST_MODE=1 \

@@ -272,6 +272,21 @@ if [[ "${DEV_FLOW_TEST_MODE:-}" != "1" ]]; then
   unset DEV_FLOW_APP_LAUNCH_HEALTH_CMD DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD DEV_FLOW_REVIEW_MCP_HEALTH_CMD DEV_FLOW_FIGMA_REST_HEALTH_CMD
 fi
 
+# 读取会话 level（缺失时按 heavy 全查，兼容旧 session）
+SESSION_LEVEL="heavy"
+if [[ -f "$STATE_FILE" ]]; then
+  SESSION_LEVEL="$(/usr/bin/python3 - "$STATE_FILE" <<'PY'
+import json
+import sys
+try:
+    state = json.load(open(sys.argv[1]))
+    print(state.get("level", "heavy"))
+except Exception:
+    print("heavy")
+PY
+)"
+fi
+
 debug_command="${DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD:-}"
 if [[ -z "$debug_command" ]]; then
   debug_command="'$(dev_flow_script_path validate-bridge-session.sh)' run"
@@ -282,7 +297,12 @@ if [[ -z "$app_launch_command" ]]; then
   app_launch_command="'$(dev_flow_script_path read-app-launch-report.sh)'"
 fi
 
-app_launch_result="$(run_app_launch_probe "$app_launch_command")"
+# 按 level 执行必需探针：trivial 只查 review_mcp；standard 查 app_launch+review_mcp；heavy 全 4 项
+if [[ "$SESSION_LEVEL" != "trivial" ]]; then
+  app_launch_result="$(run_app_launch_probe "$app_launch_command")"
+else
+  app_launch_result='{"status":"not-required","evidence":"skipped_for_trivial_level"}'
+fi
 app_launch_status="$(/usr/bin/python3 - "$app_launch_result" <<'PY'
 import json, sys
 print(json.loads(sys.argv[1])["status"])
@@ -296,36 +316,28 @@ else
   review_result="$(run_review_probe "'$(dev_flow_script_path review-health-probe.sh)'")"
 fi
 
-figma_skill_status="available"
-figma_skill_evidence="skill_and_script_present"
-if [[ ! -f "$FIGMA_SKILL_ROOT/SKILL.md" ]]; then
-  figma_skill_status="blocked"
-  figma_skill_evidence="skill_file_missing"
-elif [[ ! -f "$FIGMA_SKILL_ROOT/scripts/figma_rest.py" ]]; then
-  figma_skill_status="blocked"
-  figma_skill_evidence="figma_rest_script_missing"
-elif [[ -z "${FIGMA_REST_TOKEN:-}" && -z "${DEV_FLOW_FIGMA_REST_HEALTH_CMD:-}" ]]; then
-  figma_skill_status="blocked"
-  figma_skill_evidence="FIGMA_REST_TOKEN_missing"
-fi
-
-if [[ "$app_launch_status" == "available" ]]; then
-  if [[ -n "${DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD:-}" ]]; then
-    debug_result="$(run_probe "$debug_command" debugbridge)"
-  else
-    debug_result="$(run_bridge_session_probe "$debug_command")"
+figma_result=""
+if [[ "$SESSION_LEVEL" == "heavy" ]]; then
+  figma_skill_status="available"
+  figma_skill_evidence="skill_and_script_present"
+  if [[ ! -f "$FIGMA_SKILL_ROOT/SKILL.md" ]]; then
+    figma_skill_status="blocked"
+    figma_skill_evidence="skill_file_missing"
+  elif [[ ! -f "$FIGMA_SKILL_ROOT/scripts/figma_rest.py" ]]; then
+    figma_skill_status="blocked"
+    figma_skill_evidence="figma_rest_script_missing"
+  elif [[ -z "${FIGMA_REST_TOKEN:-}" && -z "${DEV_FLOW_FIGMA_REST_HEALTH_CMD:-}" ]]; then
+    figma_skill_status="blocked"
+    figma_skill_evidence="FIGMA_REST_TOKEN_missing"
   fi
-else
-  debug_result='{"status":"blocked","evidence":"app_launch_preflight_failed"}'
-fi
 
-if [[ "$figma_skill_status" == "available" ]]; then
-  if [[ -n "${DEV_FLOW_FIGMA_REST_HEALTH_CMD:-}" ]]; then
-    figma_result="$(run_probe "$DEV_FLOW_FIGMA_REST_HEALTH_CMD" figma_rest)"
-  else
-    figma_result="$(run_probe "/usr/bin/curl -fsS --connect-timeout 5 --max-time 15 -H \"X-Figma-Token: \$FIGMA_REST_TOKEN\" https://api.figma.com/v1/me --output /dev/null" figma_rest)"
-  fi
-  figma_result="$(/usr/bin/python3 - "$figma_skill_evidence" "$figma_result" <<'PY'
+  if [[ "$figma_skill_status" == "available" ]]; then
+    if [[ -n "${DEV_FLOW_FIGMA_REST_HEALTH_CMD:-}" ]]; then
+      figma_result="$(run_probe "$DEV_FLOW_FIGMA_REST_HEALTH_CMD" figma_rest)"
+    else
+      figma_result="$(run_probe "/usr/bin/curl -fsS --connect-timeout 5 --max-time 15 -H \"X-Figma-Token: \$FIGMA_REST_TOKEN\" https://api.figma.com/v1/me --output /dev/null" figma_rest)"
+    fi
+    figma_result="$(/usr/bin/python3 - "$figma_skill_evidence" "$figma_result" <<'PY'
 import json
 import sys
 
@@ -336,16 +348,34 @@ if result["status"] == "available":
 print(json.dumps(result, ensure_ascii=False))
 PY
 )"
-else
-  figma_result="$(/usr/bin/python3 - "$figma_skill_status" "$figma_skill_evidence" <<'PY'
+  else
+    figma_result="$(/usr/bin/python3 - "$figma_skill_status" "$figma_skill_evidence" <<'PY'
 import json
 import sys
 print(json.dumps({"status": sys.argv[1], "evidence": sys.argv[2]}, ensure_ascii=False))
 PY
 )"
+  fi
+else
+  figma_result='{"status":"not-required","evidence":"skipped_for_level"}'
 fi
 
-/usr/bin/python3 - "$REPORT_FILE" "$SESSION_ID" "$app_launch_result" "$debug_result" "$review_result" "$figma_result" <<'PY'
+debug_result=""
+if [[ "$SESSION_LEVEL" == "heavy" ]]; then
+  if [[ "$app_launch_status" == "available" ]]; then
+    if [[ -n "${DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD:-}" ]]; then
+      debug_result="$(run_probe "$debug_command" debugbridge)"
+    else
+      debug_result="$(run_bridge_session_probe "$debug_command")"
+    fi
+  else
+    debug_result='{"status":"blocked","evidence":"app_launch_preflight_failed"}'
+  fi
+else
+  debug_result='{"status":"not-required","evidence":"skipped_for_level"}'
+fi
+
+/usr/bin/python3 - "$REPORT_FILE" "$SESSION_ID" "$app_launch_result" "$debug_result" "$review_result" "$figma_result" "$SESSION_LEVEL" <<'PY'
 import json
 import sys
 from datetime import datetime, timezone
@@ -353,18 +383,26 @@ from pathlib import Path
 
 report_path = Path(sys.argv[1])
 session_id = sys.argv[2]
+level = sys.argv[7]
 checks = {
     "app_launch": json.loads(sys.argv[3]),
     "debugbridge": json.loads(sys.argv[4]),
     "review_mcp": json.loads(sys.argv[5]),
     "figma_rest_api": json.loads(sys.argv[6]),
 }
-status = "available" if all(item["status"] == "available" for item in checks.values()) else "blocked"
+LEVEL_CHECKS = {
+    "trivial": ("review_mcp",),
+    "standard": ("app_launch", "review_mcp"),
+    "heavy": ("app_launch", "debugbridge", "review_mcp", "figma_rest_api"),
+}
+required = LEVEL_CHECKS.get(level, LEVEL_CHECKS["heavy"])
+status = "available" if all(checks[n]["status"] == "available" for n in required) else "blocked"
 report = {
     "producer": "environment-health-check",
     "schema_version": 1,
     "session_id": session_id,
     "status": status,
+    "level": level,
     "checked_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     "checks": checks,
 }
