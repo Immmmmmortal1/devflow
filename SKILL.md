@@ -96,10 +96,13 @@ or read another task's session state.
 It must also support `environment-health --report <path>`. `confirm-plan` and
 `approve-commit` must reject sessions whose recorded environment status is not `available`.
 Every session requires the `review` gate by default. Before confirmation, configure conditional
-gates when the task needs them:
+gates when the task needs them (heavy-gate sessions must be started with `--level heavy`):
 
 ```bash
+# feature 带新 Figma UI（heavy）
 bash scripts/dev-flow-session.sh configure-gates --required review,figma_ui,runtime
+# ui_review 源码修复（heavy）
+bash scripts/dev-flow-session.sh configure-gates --required review,runtime,ui_parity
 ```
 
 After each gate completes, record its bounded result in the same session:
@@ -223,9 +226,9 @@ workspace-level `parity-confirmed.json` plus `confirm-plan` once.
 
 Whenever the task requires checking the rendered UI state—on either a physical device or an iOS
 Simulator—use DebugBridge as the only inspection path. Read the live view hierarchy, runtime nodes,
-and any required app logs through DebugBridge. Do not use screenshots or image inspection as
-evidence: this includes XcodeBuildMCP screenshots, Simulator screenshots, `view_image`, saved
-screen captures, or previously generated screenshot artifacts. A screenshot may not be captured,
+and any required app logs through DebugBridge. A screenshot may supplement the tree as supporting
+context for non-parity tasks, but it is never sufficient evidence on its own; screenshots may not
+replace DebugBridge inspection, and in `ui_review` tasks screenshots are prohibited entirely.
 opened, or used as a fallback for a DebugBridge inspection failure; report the DebugBridge blocker
 instead.
 
@@ -266,7 +269,10 @@ excluded changes, then wait for confirmation. After confirmation run:
 bash scripts/dev-flow-session.sh approve-commit --task "short label"
 ```
 
-Only then may the exact approved scope be committed. End the session with:
+Only then may the exact approved scope be committed. Then run the mandatory **Post-commit session
+release** per `commit-gate` (release DebugBridge for this session via
+`ui_dbugbridge_mcp.release_session`, or `bash <devflow-root>/scripts/debugbridge-cleanup.sh` if old
+instances remain) before starting unrelated work. End the session with:
 
 ```bash
 bash scripts/dev-flow-session.sh end
@@ -285,7 +291,7 @@ bash scripts/dev-flow-session.sh end
 6. Localization is incomplete until every required locale is mapped and validated.
 7. Runtime claims require correlated UI action, inspected UI tree, and current-run App log evidence.
 8. Rendered-state inspection on both physical devices and Simulators must use DebugBridge only;
-   screenshots and image inspection are prohibited, including as a fallback.
+   screenshots are never sufficient evidence on their own and are prohibited entirely in `ui_review` tasks.
 9. Review timeout, missing output, or `blocked` never becomes a pass.
 10. No commit before every required gate is recorded in the current session with its passing status.
 11. `figma_ui` requires G0-G12 all pass and `g6_validation=pass` with a bounded

@@ -87,10 +87,13 @@ Use the non-model Review MCP health/config check first:
 orchestrate_effective_config
 ```
 
-Require a usable current session with `transport=stdio`, `registered=true`, and a live reported
-PID. When the configured provider is needed for an actual review, run the provider credential check
-without printing secrets. A WebUI process or another task's MCP process is not evidence for the
-current session. Do not call a model review just to test health.
+Require a usable current session. The probe (`scripts/review-health-probe.sh`) verifies that the
+orchestrator doctor is executable and exits 0 (or the configured fallback exists for `gstack-review`);
+it does not independently confirm `transport=stdio`, `registered=true`, or a live PID — treat an
+`available` result as "probe tooling present and runnable", and reserve the deeper live-session
+verification for the actual review invocation. When the configured provider is needed for an actual
+review, run the provider credential check without printing secrets. A WebUI process or another task's
+MCP process is not evidence for the current session. Do not call a model review just to test health.
 
 When `scripts/environment-health-check.sh` runs, Review MCP health uses
 `scripts/review-health-probe.sh`. If orchestrator MCP is unavailable, the probe automatically
