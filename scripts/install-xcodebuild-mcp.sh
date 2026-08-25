@@ -128,7 +128,7 @@ manifest = {
     "project_config": ".xcodebuildmcp/config.yaml",
     "mcp_config_path": "$MCP_CONFIG_PATH",
     "ai_next_steps": [
-        "Restart Cursor/Codex MCP so XcodeBuildMCP reloads with device workflows",
+        "Ask the user to restart Cursor/Codex MCP so XcodeBuildMCP reloads with device workflows",
         "dev-flow session start, then session_set_defaults profile=<session-id> createIfNotExists=true",
         "build_run_device on a wired physical device, then dev-flow record-app-launch record",
     ],

@@ -10,11 +10,12 @@ from pathlib import Path
 
 POD_LINE = (
     "  pod 'LookDebugBridge',\n"
-    "      :git => 'https://github.com/Immmmmmortal1/UI-dbugbridge-mcp.git',\n"
+    "      :git => 'https://github.com/Immmmmmortal1/LookDebugBridgeService.git',\n"
     "      :tag => '{tag}',\n"
     "      :configurations => ['Debug']"
 )
 MARKER = "# dev-flow: LookDebugBridge"
+POD_DECL_RE = re.compile(r"pod\s+['\"]LookDebugBridge['\"]")
 
 
 def find_podfile(project_root: Path) -> Path | None:
@@ -27,13 +28,76 @@ def find_podfile(project_root: Path) -> Path | None:
     return None
 
 
+def is_comment_line(line: str) -> bool:
+    return line.lstrip().startswith("#")
+
+
+def active_pod_decl_line(line: str) -> bool:
+    code = line.split("#", 1)[0]
+    return bool(POD_DECL_RE.search(code))
+
+
 def pod_present(content: str) -> bool:
-    return bool(re.search(r"pod\s+['\"]LookDebugBridge['\"]", content))
+    return any(active_pod_decl_line(line) for line in content.splitlines())
+
+
+def canonical_pod_block(tag: str) -> str:
+    return f"{MARKER}\n{POD_LINE.format(tag=tag)}\n"
+
+
+def find_existing_pod_blocks(lines: list[str]) -> list[tuple[int, int]]:
+    ranges = []
+    idx = 0
+    while idx < len(lines):
+        line = lines[idx]
+        if not active_pod_decl_line(line):
+            idx += 1
+            continue
+
+        start = idx
+        if idx > 0 and lines[idx - 1].strip() == MARKER:
+            start = idx - 1
+
+        end = idx + 1
+        while end < len(lines):
+            stripped = lines[end].strip()
+            if not stripped:
+                break
+            if re.match(r"^\s*(pod|target\s+['\"]|end\b)", lines[end]):
+                break
+            if re.match(r"^\s*:", lines[end]) or lines[end - 1].rstrip().endswith(","):
+                end += 1
+                continue
+            break
+        ranges.append((start, end))
+        idx = end
+    return ranges
+
+
+def normalize_existing_pod(content: str, tag: str) -> tuple[str, bool]:
+    lines = content.splitlines(keepends=True)
+    ranges = find_existing_pod_blocks(lines)
+    if not ranges:
+        return content, False
+
+    expected = canonical_pod_block(tag)
+    changed = False
+    keep_start = ranges[0][0]
+    for start, end in reversed(ranges):
+        original = "".join(lines[start:end])
+        if start == keep_start:
+            if original != expected:
+                lines[start:end] = [expected]
+                changed = True
+        else:
+            del lines[start:end]
+            changed = True
+    return "".join(lines), changed
 
 
 def inject_pod(content: str, tag: str) -> tuple[str, bool]:
     if pod_present(content):
-        return content, False
+        return normalize_existing_pod(content, tag)
 
     lines = content.splitlines(keepends=True)
     target_idx = None
@@ -49,15 +113,14 @@ def inject_pod(content: str, tag: str) -> tuple[str, bool]:
     while insert_at < len(lines) and re.match(r"^\s*(use_frameworks!|#|platform\s)", lines[insert_at]):
         insert_at += 1
 
-    block = f"{MARKER}\n{POD_LINE.format(tag=tag)}\n"
-    lines.insert(insert_at, block)
+    lines.insert(insert_at, canonical_pod_block(tag))
     return "".join(lines), True
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("project_root", type=Path)
-    parser.add_argument("--tag", default="0.1.7")
+    parser.add_argument("--tag", default="0.1.14")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 

@@ -9,7 +9,7 @@ POD_CHANGED="no"
 POD_STATUS="present"
 MCP_ROOT="/tmp/debugbridge-mcp"
 SERVER_JS="/tmp/debugbridge-mcp/src/server.js"
-DEBUGBRIDGE_TAG="0.1.7"
+DEBUGBRIDGE_TAG="0.1.14"
 PODFILE_PATH="/tmp/app/Podfile"
 
 python3 - <<PY

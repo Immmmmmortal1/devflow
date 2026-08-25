@@ -5,7 +5,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LIB="$ROOT/scripts/lib"
 
 DEBUGBRIDGE_REPO="${DEV_FLOW_DEBUGBRIDGE_MCP_REPO:-https://github.com/Immmmmmortal1/UI-dbugbridge-mcp.git}"
-DEBUGBRIDGE_TAG="${DEV_FLOW_DEBUGBRIDGE_POD_TAG:-0.1.7}"
+DEBUGBRIDGE_TAG="${DEV_FLOW_DEBUGBRIDGE_POD_TAG:-0.1.14}"
+DEBUGBRIDGE_MCP_TAG="${DEV_FLOW_DEBUGBRIDGE_MCP_TAG:-$DEBUGBRIDGE_TAG}"
 PLATFORM=""
 PROJECT_ROOT=""
 MCP_ROOT=""
@@ -100,6 +101,16 @@ if [[ ! -d "$MCP_ROOT/.git" ]]; then
 else
   echo "Updating UI-dbugbridge-mcp at $MCP_ROOT"
   git -C "$MCP_ROOT" fetch --tags origin
+fi
+
+if [[ -n "$DEBUGBRIDGE_MCP_TAG" ]]; then
+  git -C "$MCP_ROOT" fetch --tags origin
+  if ! git -C "$MCP_ROOT" rev-parse -q --verify "refs/tags/$DEBUGBRIDGE_MCP_TAG" >/dev/null; then
+    echo "Missing UI-dbugbridge-mcp tag: $DEBUGBRIDGE_MCP_TAG" >&2
+    exit 1
+  fi
+  git -C "$MCP_ROOT" checkout --detach "$DEBUGBRIDGE_MCP_TAG"
+else
   current_branch="$(git -C "$MCP_ROOT" symbolic-ref -q --short HEAD || true)"
   if [[ -n "$current_branch" ]]; then
     git -C "$MCP_ROOT" pull --ff-only origin "$current_branch" || {
@@ -194,6 +205,7 @@ manifest = {
     "mcp_root": "$MCP_ROOT",
     "server_js": "$SERVER_JS",
     "pod_tag": "$DEBUGBRIDGE_TAG",
+    "mcp_tag": "$DEBUGBRIDGE_MCP_TAG",
     "pod_status": "$POD_STATUS",
     "podfile": "$PODFILE_PATH",
     "pod_changed": "$POD_CHANGED" == "yes",
@@ -208,7 +220,7 @@ elif "$POD_STATUS" == "no_podfile":
     manifest["ai_next_steps"].append("No Podfile found; integrate LookDebugBridge manually or add CocoaPods first")
 if "$POD_CHANGED" != "yes" and "$POD_STATUS" == "present":
     manifest["ai_next_steps"].append("Verify LookDebugBridge bootstrap code exists in Debug app launch")
-manifest["ai_next_steps"].append("Restart Cursor/Codex MCP after config merge")
+manifest["ai_next_steps"].append("Ask the user to restart Cursor/Codex MCP after config merge if reloading is needed")
 manifest["ai_next_steps"].append("build_run_device on wired physical device, then MCP ping or dev-flow environment-health run")
 
 Path("$STATE_DIR/debugbridge-install.json").write_text(
@@ -224,6 +236,8 @@ cat <<EOF
 MCP root:     $MCP_ROOT
 Server:       $SERVER_JS
 Platform:     $PLATFORM
+MCP tag:      ${DEBUGBRIDGE_MCP_TAG:-current-branch}
+Pod tag:      $DEBUGBRIDGE_TAG
 Pod status:   ${POD_STATUS:-skipped}
 EOF
 
@@ -233,7 +247,7 @@ if [[ -n "$PROJECT_ROOT" && "$SWIFT_BOOTSTRAP_REQUIRED" == "true" ]]; then
 AI / human next steps (App repo: $PROJECT_ROOT):
   1. cd "$(dirname "${PODFILE_PATH:-$PROJECT_ROOT}")" && pod install
   2. Add Debug-only LookDebugBridge bootstrap from .dev-flow/debugbridge-app-bootstrap.swift.snippet
-  3. Restart MCP host (Cursor/Codex) so ui_dbugbridge_mcp reloads
+  3. Ask the user to restart MCP host (Cursor/Codex) so ui_dbugbridge_mcp reloads
   4. build_run_device on wired device → MCP ping → dev-flow environment-health run
 EOF
 fi

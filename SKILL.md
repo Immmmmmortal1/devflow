@@ -23,6 +23,12 @@ approved requirements → confirmed plan → implementation/review → runtime e
 
 This file owns orchestration only. Detailed procedures belong to the selected skills below.
 
+## Global connection rule
+
+Dev-flow must not proactively close, exit, restart, or release the current MCP or DebugBridge
+connection. Keep the active connection available for the rest of the task and subsequent
+verification. Connection cleanup is allowed only when the user explicitly requests it.
+
 ## When to use
 
 Use for `/dev-flow`, `/dev-flow feature`, `/dev-flow bug`, `/dev-flow ui_review`, plan-first
@@ -44,7 +50,8 @@ bash scripts/install-dev-flow.sh --project <ios-app-root>
 - Installs [XcodeBuildMCP](https://github.com/getsentry/XcodeBuildMCP): merges MCP config with `device`, `session-management`, and `project-discovery` workflows; writes `<app>/.xcodebuildmcp/config.yaml`
 - Installs [UI-dbugbridge-mcp](https://github.com/Immmmmmortal1/UI-dbugbridge-mcp): Mac MCP server + LookDebugBridge Pod wiring when a Podfile exists
 - Prompts for review backend: [orchestrator-mcp](https://github.com/Immmmmmortal1/orchestrator-mcp) or gstack-review; use `--review-backend orchestrator|gstack` non-interactively
-- After install, restart MCP host so `XcodeBuildMCP`, `ui_dbugbridge_mcp`, and optional `orchestrator_mcp` reload
+- After install, if reloading is needed, ask the user to restart the MCP host; dev-flow must not
+  close or restart the active MCP connection on its own
 - After install, if `pod_changed` in `.dev-flow/debugbridge-install.json`: run `pod install`, add Debug bootstrap from `.dev-flow/debugbridge-app-bootstrap.swift.snippet`
 - Verify with: `bash <devflow-root>/scripts/dev-flow.sh doctor` from the app root
 
@@ -146,6 +153,16 @@ Before the health check, complete the physical-device launch preflight and recor
 bash /path/to/devflow/scripts/dev-flow.sh record-app-launch record
 ```
 
+物理真机运行必须遵守 fail-fast 顺序：
+
+1. 先使用 XcodeBuildMCP 在当前有线物理设备上完成 `build_run_device`，确认 App 已安装并启动。
+2. App 启动后立即对同一设备、同一 App、同一 dev-flow session 执行一次 DebugBridge 连通性检查。
+3. 若真机连接、构建、签名、安装或启动失败，立即停止，不进入 UI 操作和业务验收，并记录首个可行动错误。
+4. 若 DebugBridge 不可达、身份不匹配或 ping 失败，立即停止后续 UI 检查、点击、日志验收和提交流程；将当前环境记录为 `debugbridge=blocked`，运行结果记录为 `runtime-blocked`。
+5. 不得通过切换模拟器、换设备、反复扫描端口或使用截图/系统日志来把连接失败转换为通过。只有 DebugBridge 连通后，才允许继续 `get_debug_page`、`inspect_ui`、UI 操作和当前运行日志校验。
+
+这条规则是物理设备运行的硬门禁，必须写入当前 dev-flow session 的环境/运行证据；连接失败后本轮在该门禁结束，不得继续提交。
+
 Gate scripts live only in the devflow git clone. App repos keep `.dev-flow/sessions/` state only.
 Initialize once with `dev-flow-init-project.sh <app-root>` after clone; `git pull` devflow updates
 every project automatically without per-app script copies.
@@ -232,6 +249,10 @@ replace DebugBridge inspection, and in `ui_review` tasks screenshots are prohibi
 opened, or used as a fallback for a DebugBridge inspection failure; report the DebugBridge blocker
 instead.
 
+对物理设备执行渲染检查时，必须先完成“真机 App 已启动 → DebugBridge ping 成功”两步前置检查。
+任一步失败都必须立即返回 `runtime-blocked`，记录到当前 session，并停止后续页面读取、点击、日志
+查询和提交；不得降级到模拟器或其他非 DebugBridge 检查路径。
+
 ### 7. Review source changes
 
 After source edits, read `code-review-workflow` and select a route from `routes/index.md`. The base
@@ -269,10 +290,7 @@ excluded changes, then wait for confirmation. After confirmation run:
 bash scripts/dev-flow-session.sh approve-commit --task "short label"
 ```
 
-Only then may the exact approved scope be committed. Then run the mandatory **Post-commit session
-release** per `commit-gate` (release DebugBridge for this session via
-`ui_dbugbridge_mcp.release_session`, or `bash <devflow-root>/scripts/debugbridge-cleanup.sh` if old
-instances remain) before starting unrelated work. End the session with:
+Only then may the exact approved scope be committed. End the session with:
 
 ```bash
 bash scripts/dev-flow-session.sh end
@@ -292,6 +310,9 @@ bash scripts/dev-flow-session.sh end
 7. Runtime claims require correlated UI action, inspected UI tree, and current-run App log evidence.
 8. Rendered-state inspection on both physical devices and Simulators must use DebugBridge only;
    screenshots are never sufficient evidence on their own and are prohibited entirely in `ui_review` tasks.
+8a. Physical-device runtime is fail-fast: App launch/connectivity failure or DebugBridge ping failure
+    stops the run, records `runtime-blocked` and the environment blocker, and forbids UI actions,
+    simulator fallback, port-scan retries, and commit continuation.
 9. Review timeout, missing output, or `blocked` never becomes a pass.
 10. No commit before every required gate is recorded in the current session with its passing status.
 11. `figma_ui` requires G0-G12 all pass and `g6_validation=pass` with a bounded

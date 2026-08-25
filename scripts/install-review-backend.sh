@@ -215,7 +215,7 @@ manifest = {
     "ai_next_steps": [],
 }
 if "$REVIEW_BACKEND" == "orchestrator":
-    manifest["ai_next_steps"].append("Restart Cursor/Codex MCP so orchestrator_mcp reloads")
+    manifest["ai_next_steps"].append("Ask the user to restart Cursor/Codex MCP so orchestrator_mcp reloads")
     manifest["ai_next_steps"].append("Configure provider API keys in orchestrator WebUI or environment variables")
 else:
     manifest["ai_next_steps"].append("Use gstack-review (/review) when Review MCP is unavailable")

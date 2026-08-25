@@ -9,8 +9,8 @@ Usage:
 Stop orphaned UI-dbugbridge-mcp server processes and iproxy forwards on this Mac.
 
 Use when multiple MCP instances accumulated (common after repeated Codex/Cursor restarts).
-Normal dev-flow completion should call ui_dbugbridge_mcp.release_session instead; this script
-is for recovery only.
+This script is for explicitly authorized recovery only; normal dev-flow completion leaves the
+active MCP/DebugBridge connection open.
 EOF
 }
 
