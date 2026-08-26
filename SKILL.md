@@ -297,11 +297,33 @@ excluded changes, then wait for confirmation. After confirmation run:
 bash scripts/dev-flow-session.sh approve-commit --task "short label"
 ```
 
-Only then may the exact approved scope be committed. End the session with:
+Only then may the exact approved scope be committed — through the commit gate itself (stages are
+prepared by the agent with `git add`; the gate never auto-stages):
+
+```bash
+bash scripts/dev-flow-session.sh commit --message "中文提交信息"
+```
+
+`commit` requires a prior `approve-commit` and a non-empty staging area, runs `git commit` in the
+project root, and records `commit_hash`/`committed_at` in the session. End the session with:
 
 ```bash
 bash scripts/dev-flow-session.sh end
 ```
+
+### 10. TestFlight（可选）
+
+TestFlight 上传委托给各项目自己的 fastlane 脚本，dev-flow 只做门禁与证据登记。前置条件：
+会话已 `commit` 且项目 HEAD 与该 commit 一致（防止带未提交漂移发布）。上传命令由项目配置在
+`<项目>/.dev-flow/testflight-command`（如 `bundle exec fastlane beta`），未配置则 blocked 并
+提示配置方法；执行结果（成功/失败、输出尾部证据）记入 session state。
+
+```bash
+bash scripts/dev-flow-session.sh testflight
+```
+
+版本号 bump 与 tag 推送由项目自己的 fastlane 脚本负责（见教训：发版必须 bump 版本并推 tag），
+dev-flow v1 不侵入项目版本结构。
 
 ## Hard rules
 

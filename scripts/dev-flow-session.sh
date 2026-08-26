@@ -22,6 +22,8 @@ Usage:
   scripts/dev-flow-session.sh record-gate --name figma_ui|review|runtime|ui_parity --report <path>
   scripts/dev-flow-session.sh confirm-plan [--task "label"]
   scripts/dev-flow-session.sh approve-commit [--task "label"]
+  scripts/dev-flow-session.sh commit --message "msg"
+  scripts/dev-flow-session.sh testflight
   scripts/dev-flow-session.sh read-rules
   scripts/dev-flow-session.sh end
   scripts/dev-flow-session.sh status
@@ -37,6 +39,9 @@ Session selection:
 Gate note:
   ui_review source repair requires review,runtime,ui_parity before confirm-plan.
   Environment health must run before confirm-plan and cannot be updated after confirmation.
+  commit 收口提交动作：approve-commit 已批 + 暂存区非空才会执行 git commit 并记录 hash；
+  testflight 委托项目 fastlane：commit 完成且 HEAD 未漂移才执行
+  <项目>/.dev-flow/testflight-command 中的命令并登记证据。
 Task level (--level, only meaningful for start):
   trivial   - 文案/typo/纯逻辑微调专用轻量通道；环境门只要求 review_mcp；仅 review 门；
               configure-gates 禁止加 runtime/figma_ui/ui_parity。
@@ -866,6 +871,280 @@ print(state_path)
 PY
 }
 
+# commit：收口提交动作。approve-commit 已批 → 校验暂存区 → git commit → 记录 hash。
+# 提交后重置 testflight 状态（新 commit 使旧构建证据失效）。
+record_commit() {
+  local message="$1"
+  mkdir -p "$STATE_DIR"
+  DEV_FLOW_COMMIT_MESSAGE="$message" /usr/bin/python3 - "$STATE_FILE" "$SESSION_ID" "$(now_utc)" "$ROOT" <<'PY'
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+def atomic_write(path, data):
+    """原子写 session state：临时文件 + os.replace，权限 0600；拒绝 symlink 目标"""
+    if path.is_symlink():
+        raise SystemExit("refusing to write session state through a symlink")
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".state-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, str(path))
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+state_path = Path(sys.argv[1])
+session_id = sys.argv[2]
+timestamp = sys.argv[3]
+project_root = Path(sys.argv[4])
+# message 原样传给 git commit（不 strip），仅做非空与长度校验（≤200，与 state 规格一致），
+# 保证 state 记录值与实际提交完全一致
+message = os.environ.get("DEV_FLOW_COMMIT_MESSAGE", "")
+if not message.strip():
+    raise SystemExit("commit requires a non-empty --message")
+if len(message) > 200:
+    raise SystemExit(f"commit message too long ({len(message)} chars > 200)")
+
+if not state_path.exists():
+    raise SystemExit("No active dev-flow session. Run start first.")
+state = json.loads(state_path.read_text())
+if not state.get("active"):
+    raise SystemExit("No active dev-flow session. Run start first.")
+if not state.get("commit_approved_at"):
+    raise SystemExit("Commit is not approved. Run approve-commit first.")
+
+def run_git(args):
+    # 小输出命令（rev-parse/diff --quiet）才用 capture_output
+    try:
+        return subprocess.run(
+            ["/usr/bin/git", "-C", str(project_root)] + args,
+            capture_output=True, text=True, check=False, timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        raise SystemExit("git command timed out (120s)")
+
+def run_git_streamed(args):
+    # git commit 可能被 hook 输出大量日志：流式写临时文件，只读尾部，避免内存耗尽
+    out = tempfile.TemporaryFile()
+    try:
+        try:
+            completed = subprocess.run(
+                ["/usr/bin/git", "-C", str(project_root)] + args,
+                stdout=out, stderr=subprocess.STDOUT, check=False, timeout=120,
+            )
+        except subprocess.TimeoutExpired:
+            raise SystemExit("git commit timed out (120s)")
+        out.seek(0, 2)
+        size = out.tell()
+        out.seek(max(0, size - 4096))
+        tail = out.read().decode("utf-8", errors="replace").strip()[-1000:]
+        return completed.returncode, tail
+    finally:
+        out.close()
+
+if run_git(["rev-parse", "--is-inside-work-tree"]).returncode != 0:
+    raise SystemExit(f"project root is not a git repository: {project_root}")
+# 必须有暂存改动：commit 收口的是"已审批的实现"，空暂存区说明 AI 未完成 git add
+staged = run_git(["diff", "--cached", "--quiet"])
+if staged.returncode == 0:
+    raise SystemExit("No staged changes. Run git add first (commit gate does not auto-stage).")
+if staged.returncode != 1:
+    raise SystemExit("git staged-check failed: " + (staged.stderr or "").strip()[-500:])
+
+commit_rc, commit_tail = run_git_streamed(["commit", "-m", message])
+if commit_rc != 0:
+    raise SystemExit("git commit failed: " + commit_tail)
+head = run_git(["rev-parse", "HEAD"])
+commit_hash = head.stdout.strip()
+if not commit_hash:
+    raise SystemExit("git commit succeeded but HEAD is unreadable")
+# git 会规范化提交信息（去首尾空白/空行等），state 必须记录实际提交内容而非入口输入
+msg_result = run_git(["log", "-1", "--pretty=%B"])
+if msg_result.returncode != 0:
+    raise SystemExit("git commit succeeded but its message is unreadable")
+actual_msg = msg_result.stdout.strip()
+if len(actual_msg) > 200:
+    # commit hook 改写后超 200：拒绝静默截断。恢复：git reset --soft HEAD~1 后缩短 message 重跑 commit
+    raise SystemExit(
+        f"commit message after git normalization exceeds 200 chars ({len(actual_msg)}); "
+        "reset --soft HEAD~1 and re-run commit with a shorter message"
+    )
+
+state["committed_at"] = timestamp
+state["commit_hash"] = commit_hash
+state["commit_message"] = actual_msg
+# 新 commit 使旧 TestFlight 构建证据失效，重置为未上传
+state["testflight"] = {"status": "not-run", "uploaded_at": None, "evidence": None, "command_source": None}
+state["session_id"] = session_id
+atomic_write(state_path, state)
+print(state_path)
+print(f"committed: {commit_hash}")
+PY
+}
+
+# testflight：门禁 + 委托项目 fastlane。校验 commit 完成且 HEAD 未漂移 →
+# 执行 <项目>/.dev-flow/testflight-command（或测试模式 DEV_FLOW_TESTFLIGHT_CMD）→ 登记证据。
+record_testflight() {
+  mkdir -p "$STATE_DIR"
+  /usr/bin/python3 - "$STATE_FILE" "$SESSION_ID" "$(now_utc)" "$ROOT" <<'PY'
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+def atomic_write(path, data):
+    """原子写 session state：临时文件 + os.replace，权限 0600；拒绝 symlink 目标"""
+    if path.is_symlink():
+        raise SystemExit("refusing to write session state through a symlink")
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".state-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, str(path))
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+state_path = Path(sys.argv[1])
+session_id = sys.argv[2]
+timestamp = sys.argv[3]
+project_root = Path(sys.argv[4])
+
+if not state_path.exists():
+    raise SystemExit("No active dev-flow session. Run start first.")
+state = json.loads(state_path.read_text())
+if not state.get("active"):
+    raise SystemExit("No active dev-flow session. Run start first.")
+commit_hash = state.get("commit_hash")
+if not state.get("committed_at") or not commit_hash:
+    raise SystemExit("No commit recorded. Run dev-flow-session.sh commit first.")
+
+try:
+    head = subprocess.run(
+        ["/usr/bin/git", "-C", str(project_root), "rev-parse", "HEAD"],
+        capture_output=True, text=True, check=False, timeout=30,
+    )
+except subprocess.TimeoutExpired:
+    raise SystemExit("git rev-parse HEAD timed out")
+if head.returncode != 0 or head.stdout.strip() != commit_hash:
+    raise SystemExit(
+        f"HEAD has drifted from the approved commit ({commit_hash}). "
+        "Re-run dev-flow-session.sh commit before testflight."
+    )
+
+# 命令来源：生产仅认 <项目>/.dev-flow/testflight-command；
+# DEV_FLOW_TESTFLIGHT_CMD 覆盖仅 DEV_FLOW_TEST_MODE=1 生效（对齐探针覆盖防伪造模式）
+test_mode = os.environ.get("DEV_FLOW_TEST_MODE") == "1"
+env_cmd = os.environ.get("DEV_FLOW_TESTFLIGHT_CMD", "").strip()
+command = ""
+source = ""
+if env_cmd and test_mode:
+    command, source = env_cmd, "env"
+else:
+    if env_cmd and not test_mode:
+        print("warning: ignoring DEV_FLOW_TESTFLIGHT_CMD (set DEV_FLOW_TEST_MODE=1 to use it)", file=sys.stderr)
+    cmd_file = project_root / ".dev-flow" / "testflight-command"
+    if cmd_file.is_symlink():
+        raise SystemExit(f"refusing to read symlinked testflight command file: {cmd_file}")
+    if cmd_file.is_file():
+        command = cmd_file.read_text().strip()
+        source = "file"
+if not command:
+    raise SystemExit(
+        "testflight command not configured. Write the project fastlane command into "
+        f"{project_root / '.dev-flow' / 'testflight-command'} "
+        "(e.g. 'bundle exec fastlane beta'), then re-run."
+    )
+
+# timeout 显式校验：正整数且不超过 86400s，非法值给规范化错误而非 traceback
+raw_timeout = os.environ.get("DEV_FLOW_TESTFLIGHT_TIMEOUT", "3600").strip()
+try:
+    timeout = int(raw_timeout)
+except ValueError:
+    raise SystemExit(f"DEV_FLOW_TESTFLIGHT_TIMEOUT must be a positive integer (got {raw_timeout!r})")
+if timeout < 1 or timeout > 86400:
+    raise SystemExit(f"DEV_FLOW_TESTFLIGHT_TIMEOUT out of range 1..86400 (got {timeout})")
+
+# 项目命令可产生任意大输出：流式写临时文件只读尾部，避免 capture_output 内存耗尽。
+# 独立进程组启动 + 进程组排水：bash 退出不代表结束——`sleep 5 &` 这类后台脱离命令
+# 会让 bash 立即退 0 但子进程残留，必须等整组清空；超时 killpg 终止整个进程组。
+import signal
+import time
+
+def _group_alive(pgid):
+    try:
+        os.killpg(pgid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+timed_out = False
+proc_rc = None
+out = tempfile.TemporaryFile()
+try:
+    proc = subprocess.Popen(
+        ["/bin/bash", "-c", command],
+        cwd=str(project_root), stdout=out, stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+    deadline = time.monotonic() + timeout
+    while True:
+        proc_rc = proc.poll()
+        if proc_rc is not None and not _group_alive(proc.pid):
+            break  # bash 与整个进程组都已退出，命令才算真正结束
+        if time.monotonic() >= deadline:
+            timed_out = True
+            break
+        time.sleep(0.05)
+    if timed_out:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        proc.wait()
+    ok = (proc_rc == 0 and not timed_out)
+    out.seek(0, 2)
+    size = out.tell()
+    out.seek(max(0, size - 4096))
+    output_tail = out.read().decode("utf-8", errors="replace").strip()[-1000:]
+finally:
+    out.close()
+if timed_out:
+    output_tail = (f"testflight command timed out after {timeout}s; tail: " + output_tail)[-1000:]
+
+state["testflight"] = {
+    "status": "uploaded" if ok else "failed",
+    "uploaded_at": timestamp if ok else None,
+    "evidence": output_tail,
+    "command_source": source,
+}
+state["session_id"] = session_id
+atomic_write(state_path, state)
+print(state_path)
+if not ok:
+    raise SystemExit("testflight command failed: " + output_tail[-500:])
+print("testflight: uploaded")
+PY
+}
+
 parse_environment_args() {
   REPORT_FILE=""
   while [[ $# -gt 0 ]]; do
@@ -912,6 +1191,31 @@ parse_gate_config_args() {
   done
   if [[ -z "$REQUIRED_GATES" ]]; then
     echo "configure-gates requires --required" >&2
+    exit 2
+  fi
+}
+
+parse_commit_args() {
+  COMMIT_MESSAGE=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --message|-m)
+        COMMIT_MESSAGE="${2:-}"
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "Unknown argument: $1" >&2
+        usage >&2
+        exit 2
+        ;;
+    esac
+  done
+  if [[ -z "$COMMIT_MESSAGE" ]]; then
+    echo "commit requires --message" >&2
     exit 2
   fi
 }
@@ -1022,6 +1326,17 @@ case "$cmd" in
     dev_flow_rules_ensure_project_file
     refresh_rules_state
     dev_flow_rules_print "GLOBAL RULES" "$DEV_FLOW_GLOBAL_RULES_FILE"
+    dev_flow_rules_print "PROJECT RULES" "$DEV_FLOW_PROJECT_RULES_FILE"
+    ;;
+  commit)
+    parse_commit_args "$@"
+    dev_flow_rules_verify_project_fresh "$STATE_FILE"
+    record_commit "$COMMIT_MESSAGE"
+    dev_flow_rules_print "PROJECT RULES" "$DEV_FLOW_PROJECT_RULES_FILE"
+    ;;
+  testflight)
+    dev_flow_rules_verify_project_fresh "$STATE_FILE"
+    record_testflight
     dev_flow_rules_print "PROJECT RULES" "$DEV_FLOW_PROJECT_RULES_FILE"
     ;;
   end)

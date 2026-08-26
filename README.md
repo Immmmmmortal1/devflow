@@ -179,6 +179,13 @@ bash scripts/environment-health-check.sh run
 bash scripts/dev-flow-session.sh configure-gates --required review,figma_ui,runtime
 bash scripts/dev-flow-session.sh confirm-plan --task "short label"
 bash scripts/dev-flow-session.sh approve-commit --task "short label"
+
+# 收口提交（需 approve 已批 + 暂存区非空；记录 commit hash）
+bash scripts/dev-flow-session.sh commit --message "中文提交信息"
+
+# TestFlight（可选；需 commit 完成且 HEAD 未漂移；命令配置在 .dev-flow/testflight-command）
+bash scripts/dev-flow-session.sh testflight
+
 bash scripts/dev-flow-session.sh end
 ```
 
