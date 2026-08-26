@@ -9,6 +9,9 @@ dev_flow_load_paths "$SCRIPT_PATH"
 source "$(dev_flow_script_path resolve-dev-flow-session-id.sh)"
 SESSION_ID="$(resolve_dev_flow_session_id)" || exit $?
 STATE_FILE="$STATE_DIR/$SESSION_ID.json"
+# shellcheck source=lib/dev-flow-rules.sh
+source "$(cd "$(dirname "$SCRIPT_PATH")" && pwd)/lib/dev-flow-rules.sh"
+dev_flow_rules_init
 FIGMA_SKILL_ROOT="${FIGMA_REST_API_SKILL_ROOT:-$HOME/.codex/skills/figma-rest-api}"
 FIGMA_REST_TOKEN="${FIGMA_REST_TOKEN:-${FIGMA_ACCESS_TOKEN:-}}"
 if [[ -n "$FIGMA_REST_TOKEN" ]]; then
@@ -412,6 +415,10 @@ PY
 
 if "$(dev_flow_script_path dev-flow-session.sh)" environment-health --report "$REPORT_FILE" >/dev/null; then
   cat "$STATE_FILE"
+  # 双层规则机制：项目规则回带到 stdout（hash 校验已由 dev-flow-session.sh environment-health 完成）
+  if [[ -f "$DEV_FLOW_PROJECT_RULES_FILE" ]]; then
+    dev_flow_rules_print "PROJECT RULES" "$DEV_FLOW_PROJECT_RULES_FILE"
+  fi
   exit 0
 fi
 

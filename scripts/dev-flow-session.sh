@@ -9,6 +9,9 @@ dev_flow_load_paths "$SCRIPT_PATH"
 source "$(dev_flow_script_path resolve-dev-flow-session-id.sh)"
 SESSION_ID="$(resolve_dev_flow_session_id)" || exit $?
 STATE_FILE="$STATE_DIR/$SESSION_ID.json"
+# shellcheck source=lib/dev-flow-rules.sh
+source "$(cd "$(dirname "$SCRIPT_PATH")" && pwd)/lib/dev-flow-rules.sh"
+dev_flow_rules_init
 
 usage() {
   cat <<'EOF'
@@ -19,8 +22,14 @@ Usage:
   scripts/dev-flow-session.sh record-gate --name figma_ui|review|runtime|ui_parity --report <path>
   scripts/dev-flow-session.sh confirm-plan [--task "label"]
   scripts/dev-flow-session.sh approve-commit [--task "label"]
+  scripts/dev-flow-session.sh read-rules
   scripts/dev-flow-session.sh end
   scripts/dev-flow-session.sh status
+
+Rules note (双层规则机制):
+  start/read-rules 打印全局(rules/global-rules.md)+项目(.dev-flow/rules.md)规则全文到 stdout；
+  所有写 state 的门禁 action 前置校验项目规则 sha256，变更后必须先 read-rules；
+  门禁 action 成功后把项目规则回带到 stdout；approve-commit 额外校验全局规则 sha256。
 
 Session selection:
   DEV_FLOW_SESSION_ID, then CODEX_THREAD_ID, then CURSOR_CONVERSATION_ID.
@@ -80,7 +89,9 @@ write_state() {
   local level="${6:-}"
   mkdir -p "$STATE_DIR"
   /usr/bin/python3 - "$STATE_FILE" "$SESSION_ID" "$action" "$session_type" "$task" "$required_gates" "$(now_utc)" "$project_root" "$level" <<'PY'
+import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -172,6 +183,20 @@ if action == "start":
             "checks": {},
         },
     }
+    # 双层规则机制：start 必须记录全局+项目规则的 path/sha256/read_at。
+    # 路径经环境变量传入（shell 侧已校验全局文件存在、项目模板已创建）。
+    rules_block = {}
+    for scope, env_name in (("global", "DEV_FLOW_GLOBAL_RULES_FILE"),
+                            ("project", "DEV_FLOW_PROJECT_RULES_FILE")):
+        rules_path = os.environ.get(env_name, "")
+        if not rules_path or not Path(rules_path).is_file():
+            raise SystemExit(f"rules file missing for start: {env_name}={rules_path or '<unset>'}")
+        rules_block[scope] = {
+            "path": rules_path,
+            "sha256": hashlib.sha256(Path(rules_path).read_bytes()).hexdigest(),
+            "read_at": timestamp,
+        }
+    data["rules"] = rules_block
 elif action == "configure-gates":
     if not data.get("active"):
         raise SystemExit("No active dev-flow session. Run start first.")
@@ -264,6 +289,73 @@ else:
 
 atomic_write(path, data)
 print(path)
+PY
+}
+
+# read-rules：刷新 state 中全局+项目规则的 sha256/read_at（规则变更后的恢复入口）
+refresh_rules_state() {
+  mkdir -p "$STATE_DIR"
+  /usr/bin/python3 - "$STATE_FILE" "$SESSION_ID" "$(now_utc)" <<'PY'
+import hashlib
+import json
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+def atomic_write(path, data):
+    """原子写 session state：临时文件 + os.replace，权限 0600；拒绝 symlink 目标"""
+    if path.is_symlink():
+        raise SystemExit("refusing to write session state through a symlink")
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".state-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, str(path))
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+state_path = Path(sys.argv[1])
+session_id = sys.argv[2]
+timestamp = sys.argv[3]
+
+if not state_path.exists():
+    raise SystemExit("No active dev-flow session. Run start first.")
+state = json.loads(state_path.read_text())
+if not state.get("active"):
+    raise SystemExit("No active dev-flow session. Run start first.")
+
+# read-rules 不允许跨项目重绑：已记录的项目规则路径必须与当前项目一致，
+# 防止同一 session id 被切换到其他项目根后继续走门禁（应在新项目重新 start）
+existing_project = ((state.get("rules") or {}).get("project") or {}).get("path")
+current_project = os.environ.get("DEV_FLOW_PROJECT_RULES_FILE", "")
+if existing_project and existing_project != current_project:
+    raise SystemExit(
+        f"会话绑定的项目规则路径 ({existing_project}) 与当前项目 ({current_project}) 不一致；"
+        "read-rules 不能跨项目重绑，请在正确项目中操作或重新 start"
+    )
+
+rules_block = {}
+for scope, env_name in (("global", "DEV_FLOW_GLOBAL_RULES_FILE"),
+                        ("project", "DEV_FLOW_PROJECT_RULES_FILE")):
+    rules_path = os.environ.get(env_name, "")
+    if not rules_path or not Path(rules_path).is_file():
+        raise SystemExit(f"rules file missing for read-rules: {env_name}={rules_path or '<unset>'}")
+    rules_block[scope] = {
+        "path": rules_path,
+        "sha256": hashlib.sha256(Path(rules_path).read_bytes()).hexdigest(),
+        "read_at": timestamp,
+    }
+state["rules"] = rules_block
+state["session_id"] = session_id
+atomic_write(state_path, state)
+print(state_path)
 PY
 }
 
@@ -877,29 +969,60 @@ case "$cmd" in
       echo "ui_review requires --level heavy (full environment checks)" >&2
       exit 2
     fi
+    # 双层规则机制第 1 层：start 硬读。全局规则缺失直接失败；项目规则缺失则建空模板
+    if [[ ! -f "$DEV_FLOW_GLOBAL_RULES_FILE" ]]; then
+      echo "全局规则文件缺失: $DEV_FLOW_GLOBAL_RULES_FILE" >&2
+      exit 1
+    fi
+    dev_flow_rules_ensure_project_file
     rm -f "$STATE_DIR/$SESSION_ID.app-launch.json"
     write_state "start" "$SESSION_TYPE" "$TASK" "review" "" "$SESSION_LEVEL"
+    dev_flow_rules_print "GLOBAL RULES" "$DEV_FLOW_GLOBAL_RULES_FILE"
+    dev_flow_rules_print "PROJECT RULES" "$DEV_FLOW_PROJECT_RULES_FILE"
     ;;
   configure-gates)
     parse_gate_config_args "$@"
+    dev_flow_rules_verify_project_fresh "$STATE_FILE"
     write_state "configure-gates" "" "" "$REQUIRED_GATES" "" ""
+    dev_flow_rules_print "PROJECT RULES" "$DEV_FLOW_PROJECT_RULES_FILE"
     ;;
   environment-health)
     parse_environment_args "$@"
+    dev_flow_rules_verify_project_fresh "$STATE_FILE"
     record_environment "$REPORT_FILE"
+    dev_flow_rules_print "PROJECT RULES" "$DEV_FLOW_PROJECT_RULES_FILE"
     ;;
   record-gate)
     parse_gate_record_args "$@"
+    dev_flow_rules_verify_project_fresh "$STATE_FILE"
     record_gate "$GATE_NAME" "$REPORT_FILE"
+    dev_flow_rules_print "PROJECT RULES" "$DEV_FLOW_PROJECT_RULES_FILE"
     ;;
   confirm-plan)
     parse_common_args "$@"
+    dev_flow_rules_verify_project_fresh "$STATE_FILE"
     # requirements index.json 在业务项目根（$ROOT），不是 devflow 仓库根（$SOURCE_ROOT）
     write_state "confirm-plan" "" "$TASK" "" "$ROOT" ""
+    dev_flow_rules_print "PROJECT RULES" "$DEV_FLOW_PROJECT_RULES_FILE"
     ;;
   approve-commit)
     parse_common_args "$@"
+    # 双层规则机制第 3 层：commit 闭环，全局+项目规则 hash 都必须仍一致
+    dev_flow_rules_verify_project_fresh "$STATE_FILE"
+    dev_flow_rules_verify_global_fresh "$STATE_FILE"
     write_state "approve-commit" "" "$TASK" "" "" ""
+    dev_flow_rules_print "PROJECT RULES" "$DEV_FLOW_PROJECT_RULES_FILE"
+    ;;
+  read-rules)
+    # 双层规则机制：规则变更后的重读入口；刷新 hash 记录并打印全文
+    if [[ ! -f "$DEV_FLOW_GLOBAL_RULES_FILE" ]]; then
+      echo "全局规则文件缺失: $DEV_FLOW_GLOBAL_RULES_FILE" >&2
+      exit 1
+    fi
+    dev_flow_rules_ensure_project_file
+    refresh_rules_state
+    dev_flow_rules_print "GLOBAL RULES" "$DEV_FLOW_GLOBAL_RULES_FILE"
+    dev_flow_rules_print "PROJECT RULES" "$DEV_FLOW_PROJECT_RULES_FILE"
     ;;
   end)
     write_state "end" "" "" "" "" ""

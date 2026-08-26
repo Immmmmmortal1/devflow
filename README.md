@@ -184,6 +184,19 @@ bash scripts/dev-flow-session.sh end
 
 Cursor 内禁止回退到共享 `local` session（见 `scripts/resolve-dev-flow-session-id.sh`）。
 
+## 双层规则机制
+
+不靠 AI 记忆，由门禁脚本强制规则进入上下文：
+
+- **全局规则** `rules/global-rules.md`（本仓库，git 版本化）；**项目规则** `<项目>/.dev-flow/rules.md`（项目私有，`start` 自动创建空模板）。
+- `start` / `read-rules` 全文打印两份规则到 stdout 并记录 `sha256`；全局规则缺失时 `start` 失败。
+- 每个写 state 的门禁 action 前置校验项目规则 `sha256`，变更即失败；成功后回带项目规则全文（>4KB 截断警告）。
+- `approve-commit` 额外校验全局规则 `sha256`。规则文件改后先 `read-rules` 再继续：
+
+```bash
+bash scripts/dev-flow-session.sh read-rules
+```
+
 ## 安装到本机 skills
 
 推荐统一入口（见 README 顶部 **安装** 一节）：
@@ -208,7 +221,12 @@ bash scripts/dev-flow-init-project.sh /path/to/YourApp
 devflow/
 ├── SKILL.md                 # 路由与编排合同
 ├── README.md                # 本说明
+├── rules/
+│   └── global-rules.md      # 全局规则（start/read-rules 打印，门禁 hash 校验）
 ├── scripts/                 # 会话、环境、校验与测试
+│   ├── lib/
+│   │   ├── dev-flow-paths.sh
+│   │   └── dev-flow-rules.sh   # 双层规则机制共享函数
 │   ├── validate-g6-asset-binding.*
 │   ├── validate-ui-review-artifacts.*
 │   ├── fixtures/            # 校验器夹具
@@ -240,6 +258,7 @@ devskills/
 ```bash
 bash scripts/test-gate-enforcement.sh
 bash scripts/test-dev-flow-session-isolation.sh
+bash scripts/test-rules-gate.sh
 bash scripts/test-validate-g6-asset-binding.sh
 bash scripts/test-validate-ui-review-artifacts.sh
 bash scripts/test-ui-parity-gate.sh

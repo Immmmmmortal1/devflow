@@ -94,6 +94,13 @@ Task level (`--level`, only meaningful for `start`):
 
 环境健康检查按会话 level 只执行必需探针，非必需项在报告中标记为 `not-required` 且不参与最终 `available` 判定。
 
+双层规则机制（不依赖 AI 记忆，门禁脚本强制执行）：
+
+- 全局规则：`rules/global-rules.md`（中央仓库，git 版本化）；项目规则：`<项目>/.dev-flow/rules.md`（项目私有，start 时自动创建空模板）。
+- `start` / `read-rules` 把两份规则全文打印到 stdout 并在 state 记录 `rules.{global,project}.{path,sha256,read_at}`；全局规则缺失时 `start` 直接失败。
+- 所有写 state 的门禁 action（`configure-gates`/`environment-health`/`record-gate`/`confirm-plan`/`approve-commit`）前置校验项目规则 sha256，与 state 记录不符即失败；成功后把项目规则全文回带到 stdout（>4KB 截断并警告）。
+- `approve-commit` 额外校验全局规则 sha256，构成闭环。规则文件修改后必须先运行 `read-rules` 刷新记录再继续门禁操作。
+
 The script must isolate state by `DEV_FLOW_SESSION_ID`, then `CODEX_THREAD_ID`, then
 `CURSOR_CONVERSATION_ID`. Outside Cursor it may fall back to `local`; inside Cursor
 (`CURSOR_AGENT=1`) a missing conversation id is an error and must not reuse shared `local.json`.
