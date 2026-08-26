@@ -204,6 +204,23 @@ Cursor 内禁止回退到共享 `local` session（见 `scripts/resolve-dev-flow-
 bash scripts/dev-flow-session.sh read-rules
 ```
 
+## review_mcp 不可用时的 gstack-review fallback
+
+环境门探针检测到 orchestrator MCP 不可用时，会话进入 fallback 模式（证据
+`fallback=gstack-review`）。此时审查**必须**走机械入口，禁止开子 Agent / 宿主审查 agent：
+
+```bash
+bash scripts/run-review-fallback.sh   # [--route code-quality-review]
+```
+
+runner 校验会话处于 fallback 模式后，签发一次性 `fallback_token` + `packet_digest` 记入
+session state，并把审查指令、gstack review SKILL.md、route 契约、bounded 审查包
+（merge-base → 工作区含 staged/unstaged/untracked，>4000 行退化 stat）+ 报告模板全部注入
+stdout。AI 按注入流程亲自审查，把报告写到 runner 指定路径（含 token/digest/
+`review_path=fallback`），然后 `record-gate --name review` 收口——record-gate 强制校验
+token/digest/报告路径三件套 + route 一致 + gstack skill/route 契约签发后未被修改，
+`pass` 收录后销毁 token。不跑 runner 手写的 fallback 报告会被拒收。
+
 ## 安装到本机 skills
 
 推荐统一入口（见 README 顶部 **安装** 一节）：

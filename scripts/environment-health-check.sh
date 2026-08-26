@@ -259,7 +259,7 @@ if payload.get("transport") == "mcp":
     evidence = "orchestrator_mcp_health_ok"
 elif payload.get("fallback") == "gstack-review":
     skill_path = payload.get("skill_path") or "gstack-review"
-    evidence = f"review_mcp_unavailable;fallback=gstack-review;skill={skill_path}"
+    evidence = f"review_mcp_unavailable;fallback=gstack-review;skill={skill_path};run=scripts/run-review-fallback.sh"
 else:
     evidence = "review_health_probe_available"
 print(json.dumps({"status": "available", "evidence": evidence}, ensure_ascii=False))

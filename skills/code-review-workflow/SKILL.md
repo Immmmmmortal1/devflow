@@ -130,10 +130,15 @@ If Review MCP is unavailable, unhealthy, or exceeds the bounded tool timeout:
 
 1. Record the failed phase and reason.
 2. Mark the Review MCP result as `unknown`; timeout is never `pass`.
-3. Use `gstack-review` as the fallback when it can provide an independent review. Read
-   `~/.claude/skills/gstack/review/SKILL.md` (or `GSTACK_REVIEW_SKILL_ROOT/SKILL.md`) and run the
-   `/review` workflow against the current diff.
-4. Mark the result source as `fallback`; do not label it as an MCP result.
+3. Run `bash scripts/run-review-fallback.sh`. The runner verifies the session is in
+   gstack-review fallback mode, then injects the review instructions, the gstack review
+   SKILL.md, the selected route contract, and the bounded diff packet into stdout, plus the
+   exact report template. Perform the review **yourself** following the injected workflow —
+   do NOT spawn a sub-agent or use a host-native review agent; the fallback reviewer is you.
+4. Write the report with `review_path: "fallback"` to the path printed by the runner and
+   record it with `record-gate --name review`. In fallback sessions record-gate rejects
+   review reports that lack `review_path=fallback`.
+5. Mark the result source as `fallback`; do not label it as an MCP result.
 
 If both paths fail, return `review-blocked`. Local tests, self-review, or build results may be
 included as supplemental validation but cannot be relabeled as an independent reviewer result.

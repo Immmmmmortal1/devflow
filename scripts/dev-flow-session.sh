@@ -522,7 +522,7 @@ if gate_name == "review":
         "route", "reviewer_result", "run_id", "diff_evidence", "source_edits",
         "artifact_workspace", "artifact_validation_report", "baseline_report",
         "parity_confirmed_report", "repair_accepted_report", "verified_ids",
-        "debugbridge_evidence",
+        "debugbridge_evidence", "review_path", "fallback_token", "packet_digest",
     }
     extra = set(report.keys()) - REVIEW_ALLOWED_FIELDS
     if extra:
@@ -531,6 +531,81 @@ if gate_name == "review":
         raise SystemExit("review report producer must be code-review-workflow, review-health-probe, or ui-review.")
     if report.get("schema_version") != 1:
         raise SystemExit("review report schema_version must be 1.")
+    # fallback 绑定：会话环境门处于 gstack-review fallback 时，报告必须出自
+    # run-review-fallback.sh —— 校验一次性 fallback_token、packet_digest、报告路径三件套，
+    # 不跑 runner 手写 review_path=fallback 会被拒（防伪报路径/宿主审查伪报）
+    env = state.get("environment_health") or {}
+    review_mcp_check = (env.get("checks") or {}).get("review_mcp") or {}
+    env_evidence = str(review_mcp_check.get("evidence") or "")
+    env_segments = [seg.strip() for seg in env_evidence.split(";")]
+    # 结构一致性：环境门与 review_mcp 检查本身必须 available，且 evidence 分段精确匹配
+    fallback_session = (
+        env.get("status") == "available"
+        and review_mcp_check.get("status") == "available"
+        and "fallback=gstack-review" in env_segments
+    )
+    if fallback_session:
+        fb = state.get("review_fallback") or {}
+        if not fb.get("token") or report.get("fallback_token") != fb.get("token"):
+            raise SystemExit(
+                "fallback review requires a valid fallback_token issued by "
+                "scripts/run-review-fallback.sh (run it and review the injected packet)."
+            )
+        # 重新计算 packet 文件 digest：文件==state==报告三方一致，
+        # 防止签发后 packet 被篡改而报告仍填旧 digest
+        packet_path = Path(fb.get("packet_path") or "")
+        if not fb.get("packet_path") or packet_path.is_symlink() or not packet_path.is_file():
+            raise SystemExit(
+                "fallback review packet is missing or not a regular file: "
+                + str(fb.get("packet_path"))
+            )
+        actual_digest = sha256_of(packet_path)
+        if actual_digest != fb.get("packet_digest"):
+            raise SystemExit(
+                "review packet file changed after issue; re-run scripts/run-review-fallback.sh."
+            )
+        if report.get("packet_digest") != actual_digest:
+            raise SystemExit(
+                "packet_digest mismatch: review must cover the exact packet issued by "
+                "run-review-fallback.sh (re-run it after code changes)."
+            )
+        # 报告路径 symlink 绕过防护：预建 symlink 指向外部文件时 resolve() 双向跟随会放行，
+        # 改为拒 is_symlink + abspath（不跟随 symlink）比较固定签发路径
+        if report_path.is_symlink():
+            raise SystemExit(
+                "refusing to read fallback review report through a symlink: " + str(report_path)
+            )
+        issued_path = str(Path(fb.get("report_path") or ""))
+        if not issued_path or os.path.abspath(str(report_path)) != os.path.abspath(issued_path):
+            raise SystemExit(
+                "fallback review report must live at the runner-issued path: " + issued_path
+            )
+        if report.get("review_path") != "fallback":
+            raise SystemExit(
+                "Session is in gstack-review fallback mode; review report must set review_path=fallback."
+            )
+        # route 三方绑定：报告 route 必须等于 runner 签发 route（审查契约一致性）
+        if report.get("route") != fb.get("route"):
+            raise SystemExit(
+                "route mismatch: report route must equal the runner-issued route ("
+                + str(fb.get("route")) + ")."
+            )
+        # 注入文档绑定：gstack SKILL.md / route 契约签发后被修改则拒收。
+        # 文档为只读输入，允许 symlink（拒 symlink 只适用于 packet 这类写入目标）
+        for label, path_key, digest_key in (
+            ("gstack skill", "gstack_skill_path", "gstack_skill_digest"),
+            ("route contract", "route_path", "route_digest"),
+        ):
+            doc_raw = fb.get(path_key) or ""
+            doc_path = Path(doc_raw)
+            if not doc_raw or not doc_path.is_file():
+                raise SystemExit(f"fallback {label} is missing: {doc_raw}")
+            if sha256_of(doc_path) != fb.get(digest_key):
+                raise SystemExit(
+                    f"fallback {label} changed after issue; re-run scripts/run-review-fallback.sh."
+                )
+    if report.get("review_path") is not None and report.get("review_path") not in ("mcp", "fallback"):
+        raise SystemExit('review_path must be "mcp" or "fallback".')
 
 status = report.get("status")
 allowed = {
@@ -865,6 +940,9 @@ state.setdefault("gate_results", {})[gate_name] = {
     "recorded_at": recorded_at,
     "report": str(report_path),
 }
+# fallback 会话 review pass 后销毁一次性 token（revise/blocked 保留，允许同 packet 重录）
+if gate_name == "review" and status == "pass" and state.get("review_fallback"):
+    state["review_fallback"] = None
 state["session_id"] = session_id
 atomic_write(state_path, state)
 print(state_path)

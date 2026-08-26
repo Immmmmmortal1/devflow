@@ -264,7 +264,10 @@ instead.
 
 After source edits, read `code-review-workflow` and select a route from `routes/index.md`. The base
 skill owns Review MCP health, compact packet construction, MCP invocation, and bounded
-`gstack-review` fallback. The selected route owns review criteria, finding decisions, validation,
+`gstack-review` fallback. When the session is in fallback mode (environment evidence
+`fallback=gstack-review`), run `bash scripts/run-review-fallback.sh` and review **yourself** per the
+injected gstack workflow — never a sub-agent; the report must set `review_path=fallback` or
+`record-gate` rejects it. The selected route owns review criteria, finding decisions, validation,
 and the final `pass`, `blocked`, or revise result.
 
 Only route `pass`, or residual risk explicitly accepted by the user and recorded by the route, may
