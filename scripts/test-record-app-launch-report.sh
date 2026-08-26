@@ -95,4 +95,26 @@ if run_record record --report "$TMP_ROOT/wrong-session.json" >/dev/null 2>&1; th
   exit 1
 fi
 
-echo "PASS: record-app-launch-report.sh enforces --report and build_id/device_id non-placeholder"
+# 7. --report - 从 stdin 读取合法 payload（直接脚本，通过 < file 喂 stdin，避免 heredoc 嵌套）
+run_record record --report - < "$TMP_ROOT/valid.json" >/dev/null
+if ! /usr/bin/grep -q "build-2026-08-18-abc123" "$TMP_ROOT/.dev-flow/sessions/record-test.app-launch.json"; then
+  echo "FAIL: direct script --report - did not read payload from stdin" >&2
+  exit 1
+fi
+
+# 8. --report - 从 stdin 读取（dev-flow wrapper 必须透传 stdin 到底层脚本）
+write_payload "$TMP_ROOT/valid-wrapper.json" "build-wrapper-2" "00008110-001A1B2C3D4E5"
+DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=record-test \
+  /bin/bash "$ROOT/scripts/dev-flow.sh" record-app-launch record --report - < "$TMP_ROOT/valid-wrapper.json" >/dev/null
+if ! /usr/bin/grep -q "build-wrapper-2" "$TMP_ROOT/.dev-flow/sessions/record-test.app-launch.json"; then
+  echo "FAIL: dev-flow wrapper did not pass through stdin payload" >&2
+  exit 1
+fi
+
+# 9. 无 --report 时即使 stdin 有合法 payload 也必须失败（不能伪造成功）
+if run_record record < "$TMP_ROOT/valid.json" >/dev/null 2>&1; then
+  echo "FAIL: record without --report should fail even when stdin has a payload" >&2
+  exit 1
+fi
+
+echo "PASS: record-app-launch-report.sh enforces --report, build_id/device_id non-placeholder, and reads --report - from stdin (direct + dev-flow wrapper)"

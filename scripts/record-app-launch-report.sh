@@ -59,7 +59,12 @@ done
 
 mkdir -p "$STATE_DIR"
 
-/usr/bin/python3 - "$REPORT_FILE" "$SESSION_ID" "$source_path" "$(now_utc)" <<'PY'
+# Python 代码写入临时文件后运行，而不是 `python3 - <<'PY'`：
+# stdin heredoc 会占用 python 进程的 stdin，导致调用者通过
+# `--report -` / `<<JSON` 传入的报告数据永远读不到。
+PYTHON_SCRIPT_TMP="$(/usr/bin/mktemp)"
+trap 'rm -f -- "$PYTHON_SCRIPT_TMP"' EXIT
+cat > "$PYTHON_SCRIPT_TMP" <<'PY'
 import json
 import os
 import sys
@@ -136,3 +141,7 @@ if session_id == "local" and os.environ.get("CURSOR_AGENT") == "1":
 report_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 print(report_path)
 PY
+
+# 此时 python 进程的 stdin 就是本脚本的 stdin（调用者的 JSON），
+# --report - 场景可正确读取；普通文件路径场景不受影响。
+/usr/bin/python3 "$PYTHON_SCRIPT_TMP" "$REPORT_FILE" "$SESSION_ID" "$source_path" "$(now_utc)"
