@@ -20,7 +20,7 @@ session. --report is REQUIRED: pass a real build_run_device result path (or - fo
 This script never fabricates a success payload on its own.
 
 The report JSON must include producer=XcodeBuildMCP, schema_version=1, the current
-session_id, status=available, build_run_device=success, device_transport=wired, and
+session_id, status=available, build_run_device=success, device_transport=wired|simulator, and
 app_launched=true. It must also carry build_id and device_id reflecting the actual
 build and device used (placeholders "unknown"/"n/a"/"-"/"" are rejected, case-insensitive).
 
@@ -80,7 +80,6 @@ REQUIRED = {
     "schema_version": 1,
     "status": "available",
     "build_run_device": "success",
-    "device_transport": "wired",
 }
 
 
@@ -90,6 +89,13 @@ def validate_payload(payload):
     for key, expected in REQUIRED.items():
         if payload.get(key) != expected:
             raise SystemExit(f"Invalid app launch report field: {key}")
+    # device_transport 接受 wired（有线物理真机）或 simulator（显式指定的 iOS 模拟器）；
+    # 其他值视为非法，防止伪造或未确认的目标降级。
+    transport = payload.get("device_transport")
+    if transport not in ("wired", "simulator"):
+        raise SystemExit(
+            "App launch report field device_transport must be 'wired' or 'simulator'."
+        )
     if payload.get("session_id") != session_id:
         raise SystemExit("App launch report session_id does not match the current session.")
     if payload.get("app_launched") is not True:

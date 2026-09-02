@@ -1,6 +1,6 @@
 # Runtime Evidence Template
 
-Use one report per physical-device validation run. Do not claim a stronger status than the evidence
+Use one report per chosen-target validation run (wired physical device or explicit Simulator). Do not claim a stronger status than the evidence
 supports.
 
 ```yaml

@@ -117,4 +117,49 @@ if run_record record < "$TMP_ROOT/valid.json" >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "PASS: record-app-launch-report.sh enforces --report, build_id/device_id non-placeholder, and reads --report - from stdin (direct + dev-flow wrapper)"
+# 10. device_transport=simulator 合法 payload → exit 0（模拟器是合法显式目标）
+/usr/bin/python3 - "$TMP_ROOT/sim-valid.json" <<'PY'
+import json, sys
+from pathlib import Path
+Path(sys.argv[1]).write_text(json.dumps({
+    "producer": "XcodeBuildMCP", "schema_version": 1, "session_id": "record-test",
+    "status": "available", "build_run_device": "success",
+    "device_transport": "simulator", "app_launched": True,
+    "build_id": "build-sim-1", "device_id": "sim-udid-1",
+}) + "\n")
+PY
+run_record record --report "$TMP_ROOT/sim-valid.json" >/dev/null
+
+# 11. device_transport=invalid → exit 非零（非法 transport 被拒）
+/usr/bin/python3 - "$TMP_ROOT/bad-transport.json" <<'PY'
+import json, sys
+from pathlib import Path
+Path(sys.argv[1]).write_text(json.dumps({
+    "producer": "XcodeBuildMCP", "schema_version": 1, "session_id": "record-test",
+    "status": "available", "build_run_device": "success",
+    "device_transport": "bluetooth", "app_launched": True,
+    "build_id": "build-bad-1", "device_id": "device-bad-1",
+}) + "\n")
+PY
+if run_record record --report "$TMP_ROOT/bad-transport.json" >/dev/null 2>&1; then
+  echo "FAIL: record with invalid device_transport should fail" >&2
+  exit 1
+fi
+
+# 12. 缺 device_transport → exit 非零（transport 必须显式）
+/usr/bin/python3 - "$TMP_ROOT/no-transport.json" <<'PY'
+import json, sys
+from pathlib import Path
+Path(sys.argv[1]).write_text(json.dumps({
+    "producer": "XcodeBuildMCP", "schema_version": 1, "session_id": "record-test",
+    "status": "available", "build_run_device": "success",
+    "app_launched": True,
+    "build_id": "build-notrans-1", "device_id": "device-notrans-1",
+}) + "\n")
+PY
+if run_record record --report "$TMP_ROOT/no-transport.json" >/dev/null 2>&1; then
+  echo "FAIL: record without device_transport should fail" >&2
+  exit 1
+fi
+
+echo "PASS: record-app-launch-report.sh enforces --report, build_id/device_id non-placeholder, device_transport wired|simulator, and reads --report - from stdin (direct + dev-flow wrapper)"

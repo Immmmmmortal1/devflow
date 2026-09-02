@@ -56,8 +56,8 @@ import sys
 from pathlib import Path
 payload = json.loads(Path(sys.argv[1]).read_text())
 assert payload["status"] == "blocked", payload
-assert payload["evidence"] == "app_launch_report_missing;run_xcodebuildmcp_session_show_defaults_then_build_run_device", payload
-assert payload["required_tools"] == ["session_show_defaults", "build_run_device"], payload
+assert payload["evidence"] == "app_launch_report_missing;run_xcodebuildmcp_session_set_defaults_then_show_defaults_then_build_run_device", payload
+assert payload["required_tools"] == ["session_set_defaults", "session_show_defaults", "build_run_device"], payload
 PY
 
 DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=adapter-session \
@@ -83,7 +83,7 @@ from pathlib import Path
 
 state = json.loads(Path(sys.argv[1]).read_text())
 evidence = state["environment_health"]["checks"]["app_launch"]["evidence"]
-assert evidence == "app_launch_report_missing;run_xcodebuildmcp_session_show_defaults_then_build_run_device", evidence
+assert evidence == "app_launch_report_missing;run_xcodebuildmcp_session_set_defaults_then_show_defaults_then_build_run_device", evidence
 assert evidence != "app_launch_probe_not_configured"
 assert state["environment_health"]["checks"]["review_mcp"]["status"] == "not-run", state
 PY

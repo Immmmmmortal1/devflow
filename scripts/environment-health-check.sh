@@ -29,7 +29,7 @@ scripts/app-launch-preflight.sh record. By default the App launch probe reads an
 .dev-flow/sessions/<session-id>.app-launch.json through scripts/app-launch-preflight.sh status.
 Override with DEV_FLOW_APP_LAUNCH_HEALTH_CMD when a custom adapter is required. The stored or
 adapter JSON must include producer=XcodeBuildMCP, schema_version=1, the current session_id,
-status=available, build_run_device=success, device_transport=wired, and app_launched=true. Other
+status=available, build_run_device=success, device_transport=wired|simulator, and app_launched=true. Other
 probes use DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD and DEV_FLOW_REVIEW_MCP_HEALTH_CMD. Review MCP health
 defaults to scripts/review-health-probe.sh, which falls back to gstack-review when orchestrator MCP
 is unavailable. Figma REST defaults to a token-safe curl probe against /v1/me using
@@ -126,7 +126,7 @@ valid = (
     and payload.get("session_id") == session_id
     and payload.get("status") == "available"
     and payload.get("build_run_device") == "success"
-    and payload.get("device_transport") == "wired"
+    and payload.get("device_transport") in ("wired", "simulator")
     and payload.get("app_launched") is True
     and _non_placeholder(payload.get("build_id"))
     and _non_placeholder(payload.get("device_id"))
@@ -134,8 +134,10 @@ valid = (
 if valid:
     result = {
         "status": "available",
-        "evidence": "xcodebuildmcp_build_run_device_success;wired;app_launched;build_id={};device_id={}".format(
-            payload.get("build_id"), payload.get("device_id")
+        "evidence": "xcodebuildmcp_build_run_device_success;{transport};app_launched;build_id={build_id};device_id={device_id}".format(
+            transport=payload.get("device_transport"),
+            build_id=payload.get("build_id"),
+            device_id=payload.get("device_id"),
         ),
     }
 else:

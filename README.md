@@ -41,7 +41,7 @@ bash scripts/install-dev-flow.sh --project /path/to/YourApp
 4. 若 `.dev-flow/debugbridge-install.json` 显示 `pod_changed: true`：在 App 仓执行 `pod install`，并把 `.dev-flow/debugbridge-app-bootstrap.swift.snippet` 加到 Debug 启动路径（如 `AppDelegate` / `@main` App）
 5. 重启 Cursor/Codex MCP，使 `XcodeBuildMCP` / `ui_dbugbridge_mcp` / `orchestrator_mcp` 生效
 6. 装完后在 App 根目录跑：`bash /path/to/devflow/scripts/dev-flow.sh doctor`
-7. 环境门禁（confirm-plan 之后、实现之前）：`session_set_defaults` → `build_run_device`（有线真机）→ `dev-flow.sh app-launch record --report <bounded-xcodebuildmcp-json|->` → `dev-flow.sh environment-health run`
+7. 环境门禁（confirm-plan 之后、实现之前）：`tool_search` → `session_set_defaults` → `session_show_defaults` → `build_run_device`（选定目标：有线真机或显式指定的模拟器）→ `dev-flow.sh app-launch record --report <bounded-xcodebuildmcp-json|->` → `dev-flow.sh environment-health run`
 8. Figma token 用 `FIGMA_REST_TOKEN` 或 `FIGMA_ACCESS_TOKEN`
 
 安装完成后日常命令（在 App 根目录）：

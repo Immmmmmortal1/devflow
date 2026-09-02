@@ -241,8 +241,8 @@ find it on the **live rendered UI** and compare against the Figma standard.
 session/workspace. Do not begin DebugBridge lookups, and do not write `parity-result.*`, until
 that gate is green.
 
-Requires a wired physical device with the target App running (guaranteed by Step 0
-environment-health). Before the first live lookup, confirm DebugBridge is still reachable
+Requires the chosen target (wired physical device or explicit Simulator) with the target App running
+(guaranteed by Step 0 environment-health). Before the first live lookup, confirm DebugBridge is still reachable
 (`ensure_ports` + `ping`); if the App is not running, relaunch via XcodeBuildMCP, then continue.
 Screenshots are not comparison evidence; use DebugBridge hierarchy / runtime nodes only.
 
@@ -534,7 +534,8 @@ groups/<node-id>/repair-plan.md
 
 #### E. How to verify (mandatory live loop)
 
-After **each** edit for this unit, the agent must **itself** re-check on a wired physical device.
+After **each** edit for this unit, the agent must **itself** re-check on the chosen target (wired
+physical device or explicit Simulator).
 Do not ask the human to “look at the screen” as a substitute. Do not use screenshots as evidence.
 Read and execute `runtime-debug-workflow` for the build/install/launch and DebugBridge lifecycle;
 this step supplies parity criteria while that skill supplies current-run runtime evidence.
@@ -543,7 +544,7 @@ Closed loop:
 
 ```text
 edit
-→ build / install / launch on wired device
+→ build / install / launch on the chosen target
 → DebugBridge: inspect live rendered UI for this unit
 → re-apply the Compare rules for this unit_kind (same criteria as Step 2)
 → mark_after = ok | wrong | missing
@@ -634,7 +635,7 @@ result together show first-round vs post-repair for later debugging.
    if not ok continue edit; a blocked round stops the repair set for Step 4 disposition, and only
    `ok` may advance directly to the next id.
 5. Do not “fix” `ok` or `skip`/`defer` rows.
-6. Verification is **agent-driven** wired-device DebugBridge + the Compare rules block, not
+6. Verification is **agent-driven** DebugBridge on the chosen target + the Compare rules block, not
    screenshots and not “please check on your phone”.
 7. Not fixed correctly (`wrong` / still `missing`) ⇒ keep modifying; never mark the unit done early.
 
@@ -686,7 +687,7 @@ Exactly one per unit (mutually exclusive):
 1. lock scope to the rejected id and map its exact diff ownership;
 2. write `groups/<node-id>/revert-plan.md`, including shared-file/shared-constraint risks;
 3. revert only that id without changing accepted ids;
-4. rebuild/install/launch on the wired device and verify both the reverted id and any accepted
+4. rebuild/install/launch on the chosen target and verify both the reverted id and any accepted
    neighboring ids through DebugBridge;
 5. write `groups/<node-id>/revert-verify.json` with `result: reverted`, current `session_id`,
    DebugBridge/runtime evidence, and restored parity mark;
@@ -741,7 +742,7 @@ runtime-extra dispositions, `repair-accepted.json`, and the current `runtime-ver
 The route returns `pass | revise | blocked`:
 
 - `revise` → use `review-loop`; any source edit returns to the affected Step 3 repair round,
-  wired-device verification, and Step 4 human acceptance.
+  chosen-target verification, and Step 4 human acceptance.
 - `blocked` / timeout / missing evidence → stop; never record a passing review gate.
 - `pass` → write the bounded review gate report. Human-accepted residual risk must be explicit in
   the review-loop artifact.

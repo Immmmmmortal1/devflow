@@ -19,8 +19,11 @@ Usage:
   scripts/app-launch-preflight.sh record --report <path|->
 
 This script owns the dev-flow App launch preflight boundary. It does not fabricate a launch
-success. A real agent must first call XcodeBuildMCP session_show_defaults, then build_run_device
-on a wired physical device with env DEV_FLOW_SESSION_ID=<current session id>. Record the bounded
+success. A real agent must first expose XcodeBuildMCP tools, then call session_set_defaults,
+session_show_defaults, and build_run_device on the chosen target (device_transport=wired for a
+wired physical device, device_transport=simulator for an iOS Simulator) with env
+DEV_FLOW_SESSION_ID=<current session id>. The target is fixed once chosen; a failure must be
+reported, not silently switched to the other target kind or a different device. Record the bounded
 result with record --report <path|-> before running environment-health.
 EOF
 }
@@ -33,10 +36,10 @@ import sys
 session_id, report_file = sys.argv[1], sys.argv[2]
 print(json.dumps({
     "status": "blocked",
-    "evidence": "app_launch_report_missing;run_xcodebuildmcp_session_show_defaults_then_build_run_device",
+    "evidence": "app_launch_report_missing;run_xcodebuildmcp_session_set_defaults_then_show_defaults_then_build_run_device",
     "session_id": session_id,
     "expected_report": report_file,
-    "required_tools": ["session_show_defaults", "build_run_device"],
+    "required_tools": ["session_set_defaults", "session_show_defaults", "build_run_device"],
     "record_command": "bash scripts/dev-flow.sh app-launch record --report <path|->",
 }, ensure_ascii=False))
 PY
@@ -79,13 +82,17 @@ required = {
     "session_id": session_id,
     "status": "available",
     "build_run_device": "success",
-    "device_transport": "wired",
     "app_launched": True,
 }
 errors = []
 for key, expected in required.items():
     if payload.get(key) != expected:
         errors.append(key)
+# device_transport 接受 wired（有线物理真机）或 simulator（显式指定的 iOS 模拟器）；
+# 其他值一律视为非法，防止伪造或未确认的目标降级。
+transport = payload.get("device_transport")
+if transport not in ("wired", "simulator"):
+    errors.append("device_transport")
 for key in ("build_id", "device_id"):
     if not non_placeholder(payload.get(key)):
         errors.append(key)
@@ -107,12 +114,15 @@ print_instructions() {
 App launch preflight for dev-flow session: $SESSION_ID
 
 Required order:
-  1. XcodeBuildMCP session_show_defaults
-  2. Verify workspace/project, scheme, Debug configuration, and wired physical device
-  3. XcodeBuildMCP build_run_device with env DEV_FLOW_SESSION_ID=$SESSION_ID
-  4. Save a bounded JSON report, then run:
+  1. Expose XcodeBuildMCP tools via tool_search
+  2. XcodeBuildMCP session_set_defaults profile=$SESSION_ID createIfNotExists=true with
+     workspacePath (.xcworkspace for CocoaPods), scheme, configuration, platform, and the
+     explicit deviceId (physical UDID or Simulator id) chosen for this session
+  3. XcodeBuildMCP session_show_defaults to verify the active profile fields
+  4. XcodeBuildMCP build_run_device with env DEV_FLOW_SESSION_ID=$SESSION_ID on the chosen target
+  5. Save a bounded JSON report, then run:
      bash "$(dev_flow_script_path dev-flow.sh)" app-launch record --report <path|->
-  5. Run:
+  6. Run:
      bash "$(dev_flow_script_path dev-flow.sh)" environment-health run
 
 Required report fields:
@@ -121,10 +131,10 @@ Required report fields:
   session_id=$SESSION_ID
   status=available
   build_run_device=success
-  device_transport=wired
+  device_transport=wired|simulator (reflects the actual target used)
   app_launched=true
   build_id=<real non-placeholder build id>
-  device_id=<real non-placeholder device id>
+  device_id=<real non-placeholder device id (physical UDID or Simulator id)>
 EOF
 }
 
@@ -143,7 +153,7 @@ print(json.dumps({
     "device_transport": "wired",
     "app_launched": True,
     "build_id": "<real-build-id-from-XcodeBuildMCP>",
-    "device_id": "<wired-device-udid-or-id>",
+    "device_id": "<physical-udid-or-simulator-id>",
 }, ensure_ascii=False, indent=2))
 PY
 }

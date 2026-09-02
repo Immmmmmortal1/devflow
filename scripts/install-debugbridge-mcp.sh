@@ -30,7 +30,7 @@ What it does:
 AI agents after --project:
   - Run pod install in the app repo if Podfile changed
   - Add the Swift bootstrap from .dev-flow/debugbridge-app-bootstrap.swift.snippet
-  - build_run_device on a wired physical device, then verify MCP ping / environment-health
+  - build_run_device on the chosen target (wired device or Simulator), then verify MCP ping / environment-health
 
 Examples:
   bash scripts/install-debugbridge-mcp.sh
@@ -221,7 +221,7 @@ elif "$POD_STATUS" == "no_podfile":
 if "$POD_CHANGED" != "yes" and "$POD_STATUS" == "present":
     manifest["ai_next_steps"].append("Verify LookDebugBridge bootstrap code exists in Debug app launch")
 manifest["ai_next_steps"].append("Ask the user to restart Cursor/Codex MCP after config merge if reloading is needed")
-manifest["ai_next_steps"].append("build_run_device on wired physical device, then MCP ping or dev-flow environment-health run")
+manifest["ai_next_steps"].append("build_run_device on the chosen target (wired device or Simulator), then MCP ping or dev-flow environment-health run")
 
 Path("$STATE_DIR/debugbridge-install.json").write_text(
     json.dumps(manifest, indent=2) + "\n",
@@ -248,6 +248,6 @@ AI / human next steps (App repo: $PROJECT_ROOT):
   1. cd "$(dirname "${PODFILE_PATH:-$PROJECT_ROOT}")" && pod install
   2. Add Debug-only LookDebugBridge bootstrap from .dev-flow/debugbridge-app-bootstrap.swift.snippet
   3. Ask the user to restart MCP host (Cursor/Codex) so ui_dbugbridge_mcp reloads
-  4. build_run_device on wired device → MCP ping → dev-flow environment-health run
+  4. build_run_device on the chosen target (wired device or Simulator) → MCP ping → dev-flow environment-health run
 EOF
 fi

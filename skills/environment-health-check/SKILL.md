@@ -8,10 +8,11 @@ description: Use when a selected development workflow needs an explicit availabi
 ## Overview
 
 Provide an evidence-backed availability report for the development capabilities that support UI
-implementation, UI review, and runtime verification. The DebugBridge check has a mandatory physical
-App launch preflight: an App that is not running cannot prove that its in-App DebugBridge is usable.
-When invoked by `dev-flow`, this gate runs after `confirm-plan` and before implementation; when
-invoked independently, it only reports health and does not select or change a route.
+implementation, UI review, and runtime verification. The DebugBridge check has a mandatory App
+launch preflight on the chosen target (physical device or Simulator): an App that is not running
+cannot prove that its in-App DebugBridge is usable. When invoked by `dev-flow`, this gate runs
+after `confirm-plan` and before implementation; when invoked independently, it only reports health
+and does not select or change a route.
 
 ## Checks
 
@@ -19,23 +20,29 @@ Run the App launch preflight and all three capability checks, then report all fo
 infer availability from a
 configured name, an old process, a previous task, or the existence of a skill file. Review MCP and
 Figma checks remain read-only; the DebugBridge check may launch the current App as its required
-physical-device preflight.
+App launch preflight on the chosen target.
 
 ### 0. App launch preflight for DebugBridge
 
-Before calling any DebugBridge health tool, launch the current App on a physical device through the
-registered XcodeBuildMCP tools in this exact order:
+Before calling any DebugBridge health tool, launch the current App on the chosen target (physical
+device or Simulator) through the registered XcodeBuildMCP tools in this exact order:
 
-1. Isolate XcodeBuildMCP defaults with `session_set_defaults` `profile` = current session id
+1. Expose the deferred tools with
+   `tool_search("XcodeBuildMCP session_set_defaults session_show_defaults build_run_device device iOS")`.
+   Continue only if the actual callable tools include `session_set_defaults`,
+   `session_show_defaults`, and `build_run_device`; do not guess tool names or use shell builds.
+2. Isolate XcodeBuildMCP defaults with `session_set_defaults` `profile` = current session id
    (`DEV_FLOW_SESSION_ID`, then `CODEX_THREAD_ID`, then `CURSOR_CONVERSATION_ID`; never `local`
-   inside Cursor) and `createIfNotExists: true` for this worktree. Then call
-   `session_show_defaults` and confirm the project/workspace, scheme, configuration, and
-   physical device. Do not assume defaults or use a simulator.
-2. Call `build_run_device` to build, install, and launch the current App. Pass the current
+   inside Cursor) and `createIfNotExists: true` for this worktree, setting `workspacePath`
+   (`.xcworkspace` for CocoaPods), `scheme`, `configuration`, `platform`, and the explicit
+   `deviceId` of the chosen target (physical UDID or Simulator id). Then call
+   `session_show_defaults` and confirm those fields read back correctly. The target is fixed once
+   chosen; do not assume defaults or silently switch to the other target kind after a failure.
+3. Call `build_run_device` to build, install, and launch the current App. Pass the current
    session id to the launched App via `env: { DEV_FLOW_SESSION_ID: "<current session id>" }`.
    The App reads this at launch for DebugBridge `/identity`; without it, identity reports
    `sessionID: local` and the DebugBridge gate blocks.
-3. Record the bounded launch result for the current session:
+4. Record the bounded launch result for the current session:
 
 ```bash
 cd <app-root>
@@ -46,7 +53,7 @@ bash /path/to/devflow/scripts/dev-flow.sh app-launch status
 Use `app-launch instructions` when the current session has no App launch report. `--report <path|->`
 is required and must import an already bounded XcodeBuildMCP JSON payload; the gate must never
 invent a successful launch report.
-4. Only after a successful build, install, launch, and record step may the DebugBridge check call
+5. Only after a successful build, install, launch, and record step may the DebugBridge check call
    `ensure_ports`, then `ping`.
 
 Gate scripts run from the central devflow clone; the app repo only stores `.dev-flow/` session state.
@@ -149,7 +156,7 @@ authorize source edits, select a review route, or approve a commit.
 ## Safety rules
 
 - Keep Review MCP and Figma checks read-only and bounded; keep the required App launch preflight
-  bounded to the current physical device and current App.
+  bounded to the current target and current App.
 - Never probe DebugBridge before the App launch preflight succeeds.
 - Do not kill, restart, or clean up another task's service process.
 - Do not expose tokens, cookies, signatures, device identifiers, or raw sensitive payloads.

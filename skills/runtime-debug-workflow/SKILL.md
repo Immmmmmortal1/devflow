@@ -1,6 +1,6 @@
 ---
 name: runtime-debug-workflow
-description: Use when an iOS change must be built, launched, operated, inspected, or debugged on a real physical device with XcodeBuildMCP, DebugBridge, UIWindow evidence, and current-run App logs.
+description: Use when an iOS change must be built, launched, operated, inspected, or debugged on a real device (physical or Simulator) with XcodeBuildMCP, DebugBridge, UIWindow evidence, and current-run App logs.
 ---
 
 # Runtime Debug Workflow
@@ -11,34 +11,40 @@ Verify real device behavior as a correlated chain of build, launch, UI operation
 inspection, and current-run log evidence. Do not claim an endpoint, callback, state transition, or
 UI result from a screenshot, build result, or log line alone.
 
-This skill owns physical-device runtime evidence. It does not define product requirements, API
+This skill owns on-device runtime evidence (physical device or Simulator). It does not define product requirements, API
 meaning, UI parity, code review, or commit approval.
 
 ## Tool boundary
 
 Use the registered tools in this order:
 
-1. XcodeBuildMCP named profile = current session id (`DEV_FLOW_SESSION_ID`, then `CODEX_THREAD_ID`, then `CURSOR_CONVERSATION_ID`), then `session_show_defaults`, then `build_run_device` with `env: { DEV_FLOW_SESSION_ID: "<current session id>" }`.
+1. Expose deferred XcodeBuildMCP tools via `tool_search`, then `session_set_defaults` with the
+   named profile = current session id (`DEV_FLOW_SESSION_ID`, then `CODEX_THREAD_ID`, then
+   `CURSOR_CONVERSATION_ID`), then `session_show_defaults`, then `build_run_device` with
+   `env: { DEV_FLOW_SESSION_ID: "<current session id>" }`.
 2. DebugBridge `get_debug_page` and UI actions such as `tap_element`.
 3. DebugBridge `inspect_ui` for the current App UIWindow/UIView tree.
 4. DebugBridge `read_app_logs` for the complete current-run in-memory log pool, or
    `wait_app_logs` for a new matching entry.
 
-If the required registered tool or physical device is unavailable, return `runtime-blocked` with
-the exact missing capability. Do not silently switch to a simulator, Xcode GUI automation,
-`Command+R`, `xcodebuild`/`devicectl` as a substitute, system-wide log streams, or persisted log
-files for a real-device claim.
+If the required registered tool or the chosen target (physical device or Simulator) is unavailable,
+return `runtime-blocked` with the exact missing capability. Do not silently switch to the other
+target kind or a different device after a failure, and do not substitute Xcode GUI automation,
+`Command+R`, `xcodebuild`/`devicectl`, system-wide log streams, or persisted log files for a
+real-device claim.
 
 ## Workflow
 
-### 1. Establish the physical runtime
+### 1. Establish the on-device runtime
 
 Resolve the current session id (`DEV_FLOW_SESSION_ID`, then `CODEX_THREAD_ID`, then
 `CURSOR_CONVERSATION_ID`; never `local` inside Cursor). Call `session_set_defaults` with
-`profile` set to that id and `createIfNotExists: true` for this worktree, then
-`session_show_defaults`. Confirm the project/workspace, scheme, configuration, and physical
-device belong to this repo, not a sibling worktree. Then call `build_run_device` with the
-current session id in the App launch environment so DebugBridge identity matches dev-flow:
+`profile` set to that id and `createIfNotExists: true` for this worktree (setting
+workspacePath/scheme/configuration/platform/deviceId for the chosen target), then
+`session_show_defaults`. Confirm the project/workspace, scheme, configuration, and the chosen
+target (physical device or Simulator) belong to this repo, not a sibling worktree. Then call
+`build_run_device` with the current session id in the App launch environment so DebugBridge
+identity matches dev-flow:
 
 ```text
 build_run_device({ env: { DEV_FLOW_SESSION_ID: "<current session id>" } })

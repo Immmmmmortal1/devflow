@@ -27,6 +27,28 @@ PY
 EOF
 /bin/chmod +x "$TMP_ROOT/bin/ok-probe" "$TMP_ROOT/bin/fail-probe" "$TMP_ROOT/bin/app-launch-probe"
 
+cat > "$TMP_ROOT/bin/app-launch-sim-probe" <<'EOF'
+#!/usr/bin/env bash
+/usr/bin/python3 - "${DEV_FLOW_SESSION_ID}" <<'PY'
+import json, sys
+print(json.dumps({"producer":"XcodeBuildMCP","schema_version":1,"session_id":sys.argv[1],
+                  "status":"available","build_run_device":"success",
+                  "device_transport":"simulator","app_launched":True,
+                  "build_id":"build-sim-1","device_id":"sim-udid-1"}))
+PY
+EOF
+cat > "$TMP_ROOT/bin/app-launch-bad-transport-probe" <<'EOF'
+#!/usr/bin/env bash
+/usr/bin/python3 - "${DEV_FLOW_SESSION_ID}" <<'PY'
+import json, sys
+print(json.dumps({"producer":"XcodeBuildMCP","schema_version":1,"session_id":sys.argv[1],
+                  "status":"available","build_run_device":"success",
+                  "device_transport":"bluetooth","app_launched":True,
+                  "build_id":"build-bad-1","device_id":"device-bad-1"}))
+PY
+EOF
+/bin/chmod +x "$TMP_ROOT/bin/app-launch-sim-probe" "$TMP_ROOT/bin/app-launch-bad-transport-probe"
+
 run_for() {
   local session_id="$1"
   shift
@@ -226,5 +248,56 @@ fi
 run_health_for stale >/dev/null
 run_for stale record-gate --name review --report "$TMP_ROOT/review-stale.json" >/dev/null
 run_for stale approve-commit >/dev/null
+
+# simulator report 通过 standard env-health（显式模拟器是合法目标）
+run_for sim-std start --type feature --task "simulator standard" >/dev/null
+run_for sim-std confirm-plan >/dev/null
+if ! DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=sim-std \
+  DEV_FLOW_TEST_MODE=1 \
+  DEV_FLOW_APP_LAUNCH_HEALTH_CMD="$TMP_ROOT/bin/app-launch-sim-probe" \
+  DEV_FLOW_REVIEW_MCP_HEALTH_CMD="$TMP_ROOT/bin/ok-probe" \
+  /bin/bash "$ROOT/scripts/environment-health-check.sh" run >/dev/null; then
+  echo "FAIL: standard environment rejected a valid simulator app launch report" >&2
+  exit 1
+fi
+/usr/bin/python3 - "$TMP_ROOT/.dev-flow/sessions/sim-std.json" <<'PY'
+import json, sys
+from pathlib import Path
+state = json.loads(Path(sys.argv[1]).read_text())
+checks = state["environment_health"]["checks"]
+assert state["environment_health"]["status"] == "available", state["environment_health"]
+assert checks["app_launch"]["status"] == "available", checks
+assert "simulator" in checks["app_launch"]["evidence"], checks["app_launch"]["evidence"]
+PY
+
+# simulator report 通过 heavy env-health（全 4 项探针；figma 用临时 skill 目录避免本机依赖）
+/bin/mkdir -p "$TMP_ROOT/figma-skill/scripts"
+printf 'name: figma-rest-api\n' > "$TMP_ROOT/figma-skill/SKILL.md"
+printf '#!/usr/bin/env python3\n' > "$TMP_ROOT/figma-skill/scripts/figma_rest.py"
+run_for sim-hvy start --type feature --level heavy --task "simulator heavy" >/dev/null
+run_for sim-hvy confirm-plan >/dev/null
+if ! DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=sim-hvy \
+  DEV_FLOW_TEST_MODE=1 \
+  FIGMA_REST_API_SKILL_ROOT="$TMP_ROOT/figma-skill" \
+  DEV_FLOW_APP_LAUNCH_HEALTH_CMD="$TMP_ROOT/bin/app-launch-sim-probe" \
+  DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD="$TMP_ROOT/bin/ok-probe" \
+  DEV_FLOW_REVIEW_MCP_HEALTH_CMD="$TMP_ROOT/bin/ok-probe" \
+  DEV_FLOW_FIGMA_REST_HEALTH_CMD="$TMP_ROOT/bin/ok-probe" \
+  /bin/bash "$ROOT/scripts/environment-health-check.sh" run >/dev/null; then
+  echo "FAIL: heavy environment rejected a valid simulator app launch report" >&2
+  exit 1
+fi
+
+# invalid transport 在 env-health 层被拒
+run_for bad-trans start --type feature --task "bad transport" >/dev/null
+run_for bad-trans confirm-plan >/dev/null
+if DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=bad-trans \
+  DEV_FLOW_TEST_MODE=1 \
+  DEV_FLOW_APP_LAUNCH_HEALTH_CMD="$TMP_ROOT/bin/app-launch-bad-transport-probe" \
+  DEV_FLOW_REVIEW_MCP_HEALTH_CMD="$TMP_ROOT/bin/ok-probe" \
+  /bin/bash "$ROOT/scripts/environment-health-check.sh" run >/dev/null 2>&1; then
+  echo "FAIL: environment health accepted an invalid device_transport" >&2
+  exit 1
+fi
 
 echo "PASS: environment health runs after confirm-plan; required before gates/commit"

@@ -38,32 +38,51 @@ Before every XcodeBuildMCP interaction in a dev-flow task, reread this section a
 hard gate. Do not rely on memory, previous turns, or inferred tool names.
 
 The XcodeBuildMCP launch chain is atomic. Once it starts, the next tool calls must be exactly
-`tool_search` → exposed `session_show_defaults` → exposed `build_run_device`, with no intervening
-`exec_command`, shell/noop command, git command, plan update, status probe, DebugBridge call, or
-unrelated tool. If an unrelated tool is accidentally called between these steps, report the mistake
-as invalid evidence and restart the atomic chain from `tool_search`.
+`tool_search` → exposed `session_set_defaults` → exposed `session_show_defaults` → exposed
+`build_run_device`, with no intervening `exec_command`, shell/noop command, git command, plan
+update, status probe, DebugBridge call, or unrelated tool. If an unrelated tool is accidentally
+called between these steps, report the mistake as invalid evidence and restart the atomic chain
+from `tool_search`.
+
+Runtime target policy. The launch target is either a wired physical device or an iOS Simulator,
+chosen explicitly by the user, the project profile, or the active XcodeBuildMCP profile. Once a
+target (with its `deviceId`/simulator id) is chosen for the session, it is fixed: a launch/connect
+failure must be reported as a blocker and must not silently fall back to the other target kind or
+to a different device. A Simulator is a valid target only when explicitly chosen up front; it must
+never be used as an unconfirmed fallback after a physical-device failure, and vice versa.
 
 0. Expose the deferred XcodeBuildMCP tools first with
-   `tool_search("XcodeBuildMCP session_show_defaults build_run_device device iOS")`. This must
-   surface the actual `session_show_defaults` and `build_run_device` tools in the callable tool
-   list. If tool discovery fails or only unrelated tools are exposed, stop and report that
-   XcodeBuildMCP was not callable in the current agent turn. Do not continue with shell commands,
-   placeholder function names, or guessed namespaces.
-1. Call the exposed XcodeBuildMCP `session_show_defaults` before the first XcodeBuildMCP
-   build/run/test call in the session.
-2. Verify the active profile, not a guessed path. The profile must contain the intended
-   `workspacePath`, `scheme`, `configuration`, `platform`, and physical `deviceId`.
-3. For CocoaPods projects, `workspacePath` must point to the `.xcworkspace`; never use the sibling
+   `tool_search("XcodeBuildMCP session_set_defaults session_show_defaults build_run_device device iOS")`.
+   This must surface the actual `session_set_defaults`, `session_show_defaults`, and
+   `build_run_device` tools in the callable tool list. If tool discovery fails or only unrelated
+   tools are exposed, stop and report that XcodeBuildMCP was not callable in the current agent
+   turn. Do not continue with shell commands, placeholder function names, or guessed namespaces.
+1. Call the exposed XcodeBuildMCP `session_set_defaults` to isolate/seed the active profile for
+   this worktree before reading or building. Pass `profile=<current session id>`
+   (`DEV_FLOW_SESSION_ID`, then `CODEX_THREAD_ID`, then `CURSOR_CONVERSATION_ID`; never `local`
+   inside Cursor) and `createIfNotExists=true`, and set the project target fields:
+   `workspacePath` (`.xcworkspace` for CocoaPods projects), `scheme`, `configuration`, `platform`,
+   and the explicit `deviceId` (physical UDID or Simulator id) chosen for this session. If any
+   target field is genuinely unknown, stop and ask the user/project rules to provide it; do not
+   guess. An active profile that is initially empty is not, by itself, a stop condition, because
+   `session_set_defaults` is the legitimate action that fills it.
+2. Call the exposed XcodeBuildMCP `session_show_defaults` to read back the active profile and
+   verify it before the first build/run/test call in the session.
+3. Verify the active profile, not a guessed path. The profile must contain the intended
+   `workspacePath`, `scheme`, `configuration`, `platform`, and the `deviceId` of the chosen target
+   (physical UDID or Simulator id).
+4. For CocoaPods projects, `workspacePath` must point to the `.xcworkspace`; never use the sibling
    `.xcodeproj` for build, install, launch, DebugBridge bootstrap, or runtime verification.
-4. If the active profile is missing, stale, uses the wrong workspace/project, has no `deviceId`, or
-   points to `.xcodeproj` for a CocoaPods app, stop immediately and report the exact profile field
-   that must be fixed. Do not keep trying alternative paths, do not run a shell `xcodebuild`, and do
-   not switch to simulator as a workaround.
-5. After the profile is verified, call the exposed XcodeBuildMCP `build_run_device` for
-   physical-device launch. Pass
-   `env.DEV_FLOW_SESSION_ID=<current session id>` to the launched app. Do not call `build_device`,
-   `install_app_device`, or `launch_app_device` separately unless `build_run_device` is unavailable
-   in the actual exposed XcodeBuildMCP tool list and that blocker is reported first.
+5. If the active profile is missing required target fields after `session_set_defaults`, stale,
+   uses the wrong workspace/project, has no `deviceId`, or points to `.xcodeproj` for a CocoaPods
+   app, stop immediately and report the exact profile field that must be fixed. Do not keep trying
+   alternative paths, do not run a shell `xcodebuild`, and do not silently switch to the other
+   target kind or a different device as a workaround.
+6. After the profile is verified, call the exposed XcodeBuildMCP `build_run_device` for launch on
+   the chosen target. Pass `env.DEV_FLOW_SESSION_ID=<current session id>` to the launched app. Do
+   not call `build_device`, `install_app_device`, or `launch_app_device` separately unless
+   `build_run_device` is unavailable in the actual exposed XcodeBuildMCP tool list and that blocker
+   is reported first.
 
 If a flow rule, script, or project profile appears wrong, dev-flow must raise the process problem to
 the user instead of silently attempting a workaround that wastes time or produces invalid evidence.
@@ -98,7 +117,7 @@ bash scripts/install-dev-flow.sh --project <ios-app-root>
 | Route / condition | Required skill | Owns |
 |---|---|---|
 | Every task | `code-grounded` | evidence, scope, classification |
-| Post-confirm gate before implementation / commit flow | `environment-health-check` | physical App launch preflight plus DebugBridge, Review MCP, and `figma-rest-api` availability, trimmed by session level |
+| Post-confirm gate before implementation / commit flow | `environment-health-check` | App launch preflight on the chosen target plus DebugBridge, Review MCP, and `figma-rest-api` availability, trimmed by session level |
 | `feature` | `feature-workflow` | feature analysis and execution plan |
 | `bug` | `bug-workflow` | bug analysis and repair plan |
 | Stateful behavior | `requirements-closure` | closed state chain and requirements artifact |
@@ -239,31 +258,33 @@ bash /path/to/devflow/scripts/dev-flow.sh app-launch status
 bash /path/to/devflow/scripts/dev-flow.sh environment-health run
 ```
 
-If `app-launch status` is blocked, stop and complete the physical-device launch preflight before
-the health check:
+If `app-launch status` is blocked, stop and complete the App launch preflight on the chosen target
+(physical device or Simulator) before the health check:
 
 ```bash
 bash /path/to/devflow/scripts/dev-flow.sh app-launch instructions
 # XcodeBuildMCP: first expose deferred tools with:
-# tool_search("XcodeBuildMCP session_show_defaults build_run_device device iOS")
-# Then call the exposed session_show_defaults and verify active profile fields.
-# Required fields: workspacePath (.xcworkspace for CocoaPods), scheme, configuration, platform=iOS,
-# and physical deviceId. If any field is wrong or missing, stop and report it; do not guess paths.
+# tool_search("XcodeBuildMCP session_set_defaults session_show_defaults build_run_device device iOS")
+# Then call session_set_defaults profile=<current session id> createIfNotExists=true with
+#   workspacePath (.xcworkspace for CocoaPods), scheme, configuration, platform=iOS,
+#   and the explicit deviceId (physical UDID or Simulator id) chosen for this session.
+# Then call the exposed session_show_defaults and verify the active profile fields.
+# If any field is wrong or missing after set_defaults, stop and report it; do not guess paths.
 # Then call the exposed build_run_device with env DEV_FLOW_SESSION_ID=<current session id>.
 bash /path/to/devflow/scripts/dev-flow.sh app-launch record --report <bounded-xcodebuildmcp-json|->
 bash /path/to/devflow/scripts/dev-flow.sh app-launch status
 ```
 
-物理真机运行必须遵守 fail-fast 顺序：
+App 运行必须遵守 fail-fast 顺序（目标可以是物理真机或显式指定的模拟器，选定后不得更换）：
 
-1. 先通过 `tool_search("XcodeBuildMCP session_show_defaults build_run_device device iOS")` 暴露当前轮可调用的 XcodeBuildMCP 工具；如果没有暴露出 `session_show_defaults` 和 `build_run_device`，立即报告工具发现失败，不得改用 shell、占位函数或猜测命名空间。
-2. 再调用 XcodeBuildMCP `session_show_defaults`，只信 active profile；确认 workspace/scheme/configuration/platform/deviceId 正确后，再在当前有线物理设备上完成 `build_run_device`，确认 App 已安装并启动。
-3. App 启动后立即对同一设备、同一 App、同一 dev-flow session 执行一次 DebugBridge 连通性检查。
-4. 若真机连接、构建、签名、安装或启动失败，立即停止，不进入 UI 操作和业务验收，并记录首个可行动错误。
+1. 先通过 `tool_search("XcodeBuildMCP session_set_defaults session_show_defaults build_run_device device iOS")` 暴露当前轮可调用的 XcodeBuildMCP 工具；如果没有暴露出 `session_set_defaults`、`session_show_defaults` 和 `build_run_device`，立即报告工具发现失败，不得改用 shell、占位函数或猜测命名空间。
+2. 再调用 XcodeBuildMCP `session_set_defaults`（`profile=<current session id>`、`createIfNotExists=true`，并写入 workspace/scheme/configuration/platform/deviceId）；随后调用 `session_show_defaults` 读回 active profile 确认目标字段正确，再在选定目标上完成 `build_run_device`，确认 App 已安装并启动。
+3. App 启动后立即对同一目标、同一 App、同一 dev-flow session 执行一次 DebugBridge 连通性检查。
+4. 若连接、构建、签名、安装或启动失败，立即停止，不进入 UI 操作和业务验收，并记录首个可行动错误；不得把目标失败转换为通过。
 5. 若 DebugBridge 不可达、身份不匹配或 ping 失败，立即停止后续 UI 检查、点击、日志验收和提交流程；将当前环境记录为 `debugbridge=blocked`，运行结果记录为 `runtime-blocked`。
-6. 不得使用无效路径、`.xcodeproj`、shell `xcodebuild`、切换模拟器、换设备、反复扫描端口或截图/系统日志来把连接失败转换为通过。只有 DebugBridge 连通后，才允许继续运行时 UI 操作、视图树检查和当前运行日志校验。
+6. 不得使用无效路径、`.xcodeproj`、shell `xcodebuild`、未确认的切换模拟器/换设备、反复扫描端口或截图/系统日志来把连接失败转换为通过。只有 DebugBridge 连通后，才允许继续运行时 UI 操作、视图树检查和当前运行日志校验。
 
-这条规则是物理设备运行的硬门禁，必须写入当前 dev-flow session 的环境/运行证据；连接失败后本轮在该门禁结束，不得继续提交。
+这条规则是 App 运行的硬门禁，必须写入当前 dev-flow session 的环境/运行证据；连接失败后本轮在该门禁结束，不得继续提交。
 
 Gate scripts live only in the devflow git clone. App repos keep `.dev-flow/sessions/` state only.
 Initialize once with `dev-flow-init-project.sh <app-root>` after clone; `git pull` devflow updates
@@ -297,7 +318,7 @@ route-specific fallback to bypass this gate, except the built-in Review MCP → 
   verification → obtain `repair-accepted.json`. Do not edit any Group before the whole-page
   comparison and human authorization are complete. After source repairs, call
   `code-review-workflow` with route `ui-parity-review` (post-fix only).
-- When the task needs physical-device evidence, delegate the full runtime loop to
+- When the task needs on-device runtime evidence, delegate the full runtime loop to
   `runtime-debug-workflow`. Accept only `runtime-verified`, `runtime-failed`, or
   `runtime-blocked`; never convert missing evidence into a pass.
 
@@ -399,7 +420,7 @@ dev-flow v1 不侵入项目版本结构。
    screenshots are never sufficient evidence on their own and are prohibited entirely in `ui_review` tasks.
 8a. Physical-device runtime is fail-fast: App launch/connectivity failure or DebugBridge ping failure
     stops the run, records `runtime-blocked` and the environment blocker, and forbids UI actions,
-    simulator fallback, port-scan retries, and commit continuation.
+    unconfirmed simulator fallback, port-scan retries, and commit continuation.
 9. Review timeout, missing output, or `blocked` never becomes a pass.
 10. No commit before every required gate is recorded in the current session with its passing status.
 11. `figma_ui` requires G0-G12 all pass and `g6_validation=pass` with a bounded
@@ -411,13 +432,15 @@ dev-flow v1 不侵入项目版本结构。
 13. Mixed features, unrelated fixes, and formatting-only changes must be split into separate commits.
 14. New Figma UI is a `feature` sub-route; `ui_new` must not be exposed as a first-level route.
 15. Before every XcodeBuildMCP call, reread and follow `XcodeBuildMCP fixed invocation rule`: first
-    expose deferred tools with `tool_search("XcodeBuildMCP session_show_defaults build_run_device device iOS")`,
-    then call the exposed `session_show_defaults`, verify the active profile, and call the exposed
-    `build_run_device` for physical-device launch. This chain is atomic: no `exec_command`,
+    expose deferred tools with `tool_search("XcodeBuildMCP session_set_defaults session_show_defaults build_run_device device iOS")`,
+    then call the exposed `session_set_defaults` to seed the profile, call the exposed
+    `session_show_defaults` to verify it, and call the exposed `build_run_device` for launch on the
+    chosen target (physical device or Simulator). This chain is atomic: no `exec_command`,
     shell/noop command, git command, plan update, status probe, DebugBridge call, or unrelated tool
     may be inserted between those steps. Tool discovery failure, invalid paths, `.xcodeproj` for
-    CocoaPods apps, shell `xcodebuild`, simulator fallback, guessed tool calls, or interruption of
-    the atomic chain are blockers and must be reported immediately.
+    CocoaPods apps, shell `xcodebuild`, unconfirmed simulator/device fallback (silently switching
+    targets after a failure), guessed tool calls, or interruption of the atomic chain are blockers
+    and must be reported immediately.
 
 ## Flow
 

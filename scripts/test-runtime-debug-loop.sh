@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ORCHESTRATOR="$ROOT/SKILL.md"
 RUNTIME_SKILL="$ROOT/skills/runtime-debug-workflow/SKILL.md"
+HEALTH_SKILL="$ROOT/skills/environment-health-check/SKILL.md"
 
 require_text() {
   local file="$1"
@@ -24,7 +25,27 @@ if grep -Eq 'get_debug_page|tap_element|read_app_logs|wait_app_logs|inspect_ui' 
   exit 1
 fi
 
-require_text "$RUNTIME_SKILL" 'XcodeBuildMCP' 'missing physical-device build/run guidance'
+# XcodeBuildMCP 原子链必须包含 session_set_defaults（合法补齐空 profile 的动作）
+require_text "$ORCHESTRATOR" 'session_set_defaults' 'XcodeBuildMCP atomic chain missing session_set_defaults'
+if ! /usr/bin/grep -qF 'tool_search("XcodeBuildMCP session_set_defaults session_show_defaults build_run_device device iOS")' "$ORCHESTRATOR"; then
+  echo "FAIL: XcodeBuildMCP tool_search query must include session_set_defaults" >&2
+  exit 1
+fi
+if ! /usr/bin/grep -qF 'tool_search("XcodeBuildMCP session_set_defaults session_show_defaults build_run_device device iOS")' "$HEALTH_SKILL"; then
+  echo "FAIL: environment-health-check tool_search query must include session_set_defaults" >&2
+  exit 1
+fi
+
+# 不得再有"绝对禁止模拟器"旧语义；但必须保留禁止 silent fallback / 自动换设备语义
+if /usr/bin/grep -qF 'do not switch to simulator as a workaround' "$ORCHESTRATOR"; then
+  echo "FAIL: SKILL.md still has absolute simulator ban wording" >&2
+  exit 1
+fi
+require_text "$ORCHESTRATOR" 'unconfirmed simulator fallback' 'missing silent-fallback prohibition'
+require_text "$ROOT/rules/global-rules.md" '选定目标（有线真机或显式指定模拟器）' 'global rules must allow explicit Simulator target'
+require_text "$ROOT/skills/ui-review/SKILL.md" 'chosen target \(wired physical device or explicit Simulator\)' 'ui-review must allow explicit Simulator target'
+
+require_text "$RUNTIME_SKILL" 'XcodeBuildMCP' 'missing on-device build/run guidance'
 require_text "$RUNTIME_SKILL" 'get_debug_page|tap_element' 'missing autonomous UI interaction guidance'
 require_text "$RUNTIME_SKILL" 'inspect_ui' 'missing UIWindow/UIView inspection guidance'
 require_text "$RUNTIME_SKILL" 'read_app_logs|wait_app_logs' 'missing current-run App log-pool guidance'
