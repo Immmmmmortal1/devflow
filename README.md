@@ -293,3 +293,34 @@ bash scripts/test-validate-g6-asset-binding.sh
 bash scripts/test-validate-ui-review-artifacts.sh
 bash scripts/test-ui-parity-gate.sh
 ```
+
+## 更新通知（飞书）
+
+发版 / 打 tag 后，由 AI 或维护者显式执行通知脚本，把 devflow 更新通知推送到飞书群。
+
+- **飞书 webhook 不入库**：脚本只从 `FEISHU_UPDATE_WEBHOOK` 环境变量读取；AI 执行时应从
+  本机安全区 / 环境变量取值，绝不写入仓库、命令示例、日志或提交（教训 009）。
+- 通知脚本：`scripts/notify-feishu-update.sh`（消息含仓库、版本、提交、触发者、构建链接）
+
+发布后通知示例：
+
+```bash
+# 先由 AI / 维护者从安全区注入 FEISHU_UPDATE_WEBHOOK，避免真实 webhook 进入 shell history。
+bash scripts/notify-feishu-update.sh \
+  --repo Immmmmmortal1/devflow \
+  --tag v0.1.1 \
+  --sha "$(git rev-parse HEAD)" \
+  --commit-url "https://github.com/Immmmmmortal1/devflow/commit/$(git rev-parse HEAD)" \
+  --message "devflow 已发布 v0.1.1"
+```
+
+本地/CI 测试**必须**用假 webhook 覆盖，禁止直发生产群：
+
+```bash
+# 启动假飞书 server 并验证（缺 webhook 失败、请求结构正确、输出不泄露 webhook）
+bash scripts/test-notify-feishu-update.sh
+
+# 手动用假 webhook 跑一次（端口换成假 server 实际端口）
+FEISHU_UPDATE_WEBHOOK=http://127.0.0.1:8000/ \
+  bash scripts/notify-feishu-update.sh --repo owner/devflow --tag v1.0.0
+```
