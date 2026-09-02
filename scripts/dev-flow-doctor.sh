@@ -40,6 +40,7 @@ required=(
   install-review-backend.sh
   resolve-dev-flow-session-id.sh
   dev-flow-session.sh
+  app-launch-preflight.sh
   environment-health-check.sh
   record-app-launch-report.sh
   read-app-launch-report.sh
@@ -82,7 +83,7 @@ if [[ -f "$DEV_FLOW_PROJECT_ROOT/.dev-flow/source-root" ]]; then
   fi
 fi
 
-if ! /usr/bin/grep -q 'read-app-launch-report.sh' "$DEV_FLOW_SCRIPTS_DIR/environment-health-check.sh"; then
+if ! /usr/bin/grep -q 'app-launch-preflight.sh' "$DEV_FLOW_SCRIPTS_DIR/environment-health-check.sh"; then
   echo "Stale dev-flow source: environment-health-check.sh is too old." >&2
   echo "Fix: git pull your devflow clone." >&2
   exit 1

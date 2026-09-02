@@ -63,8 +63,8 @@ PY
 setup_approved() {
   local session_id="$1"
   run_for "$session_id" start --type feature --level trivial --task "$session_id" >/dev/null
-  run_health_review_only "$session_id"
   run_for "$session_id" confirm-plan >/dev/null
+  run_health_review_only "$session_id"
   write_review_pass "$session_id"
   run_for "$session_id" record-gate --name review --report "$TMP_ROOT/review-$session_id.json" >/dev/null
   run_for "$session_id" approve-commit >/dev/null
@@ -345,10 +345,10 @@ run_ng() {
     /bin/bash "$ROOT/scripts/dev-flow-session.sh" "$@"
 }
 run_ng start --type feature --level trivial --task "ng" >/dev/null
+run_ng confirm-plan >/dev/null
 DEV_FLOW_PROJECT_ROOT="$TMP_NG" DEV_FLOW_SESSION_ID=ng \
   DEV_FLOW_TEST_MODE=1 DEV_FLOW_REVIEW_MCP_HEALTH_CMD="$TMP_ROOT/bin/ok-probe" \
   /bin/bash "$ROOT/scripts/environment-health-check.sh" run >/dev/null
-run_ng confirm-plan >/dev/null
 /usr/bin/python3 - "$TMP_NG" <<'PY'
 import json, sys
 from pathlib import Path

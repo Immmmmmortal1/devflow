@@ -64,8 +64,8 @@ PY
 setup_trivial_chain() {
   local session_id="$1"
   run_for "$session_id" start --type feature --level trivial --task "$session_id" >/dev/null
-  run_health_review_only "$session_id"
   run_for "$session_id" confirm-plan >/dev/null
+  run_health_review_only "$session_id"
   write_review_pass "$session_id"
   run_for "$session_id" record-gate --name review --report "$TMP_ROOT/review-$session_id.json" >/dev/null
 }
@@ -118,11 +118,11 @@ PY
 setup_trivial_chain gclose
 # 全链路用覆盖的全局文件（setup 里用的是真实全局文件；此用例单独建链）
 run_for_g gchain start --type feature --level trivial --task "gchain" >/dev/null
+run_for_g gchain confirm-plan >/dev/null
 DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=gchain \
   DEV_FLOW_TEST_MODE=1 DEV_FLOW_GLOBAL_RULES_FILE="$FAKE_GLOBAL" \
   DEV_FLOW_REVIEW_MCP_HEALTH_CMD="$TMP_ROOT/bin/ok-probe" \
   /bin/bash "$ROOT/scripts/environment-health-check.sh" run >/dev/null
-run_for_g gchain confirm-plan >/dev/null
 write_review_pass gchain
 run_for_g gchain record-gate --name review --report "$TMP_ROOT/review-gchain.json" >/dev/null
 printf '# tampered global rule\n' >> "$FAKE_GLOBAL"
@@ -222,6 +222,7 @@ fi
 
 # ---- 用例 14：项目规则变更后 environment-health 拒绝；read-rules 后恢复 ----
 run_for env-fresh start --type feature --level trivial --task "env-fresh" >/dev/null
+run_for env-fresh confirm-plan >/dev/null
 printf '\n# changed before health\n' >> "$PROJECT_RULES"
 if run_health_review_only env-fresh; then
   echo "FAIL: environment-health passed after project rules changed" >&2
@@ -238,6 +239,8 @@ if run_for env-fresh confirm-plan >/dev/null 2>&1; then
 fi
 run_for env-fresh read-rules >/dev/null
 run_for env-fresh confirm-plan >/dev/null
+# 重新 confirm 后旧 env 过期（checked_at < 新 confirmed_at），重跑 env
+run_health_review_only env-fresh >/dev/null
 write_review_pass env-fresh
 run_for env-fresh record-gate --name review --report "$TMP_ROOT/review-env-fresh.json" >/dev/null
 printf '\n# changed before record\n' >> "$PROJECT_RULES"
@@ -274,6 +277,7 @@ PY
 
 # ---- 用例 18：environment-health-check.sh 成功时 stdout 回带项目规则 ----
 run_for env-echo start --type feature --level trivial --task "env-echo" >/dev/null
+run_for env-echo confirm-plan >/dev/null
 out="$(DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=env-echo \
   DEV_FLOW_TEST_MODE=1 \
   DEV_FLOW_REVIEW_MCP_HEALTH_CMD="$TMP_ROOT/bin/ok-probe" \

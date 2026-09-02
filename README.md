@@ -41,15 +41,19 @@ bash scripts/install-dev-flow.sh --project /path/to/YourApp
 4. 若 `.dev-flow/debugbridge-install.json` 显示 `pod_changed: true`：在 App 仓执行 `pod install`，并把 `.dev-flow/debugbridge-app-bootstrap.swift.snippet` 加到 Debug 启动路径（如 `AppDelegate` / `@main` App）
 5. 重启 Cursor/Codex MCP，使 `XcodeBuildMCP` / `ui_dbugbridge_mcp` / `orchestrator_mcp` 生效
 6. 装完后在 App 根目录跑：`bash /path/to/devflow/scripts/dev-flow.sh doctor`
-7. 环境门禁前：`session_set_defaults` → `build_run_device`（有线真机）→ `dev-flow.sh record-app-launch record` → `dev-flow.sh environment-health run`
+7. 环境门禁（confirm-plan 之后、实现之前）：`session_set_defaults` → `build_run_device`（有线真机）→ `dev-flow.sh app-launch record --report <bounded-xcodebuildmcp-json|->` → `dev-flow.sh environment-health run`
 8. Figma token 用 `FIGMA_REST_TOKEN` 或 `FIGMA_ACCESS_TOKEN`
 
 安装完成后日常命令（在 App 根目录）：
 
 ```bash
+# 启动会话并分类（start 后先定位/出计划，再 confirm-plan）
 bash /path/to/devflow/scripts/dev-flow.sh session start --type bug --task "label"
 bash /path/to/devflow/scripts/dev-flow.sh session start --type feature --level heavy --task "label"
-bash /path/to/devflow/scripts/dev-flow.sh record-app-launch record
+bash /path/to/devflow/scripts/dev-flow.sh session confirm-plan
+# 计划确认后跑环境门禁（confirm-plan 之后、实现之前）
+bash /path/to/devflow/scripts/dev-flow.sh app-launch instructions
+bash /path/to/devflow/scripts/dev-flow.sh app-launch record --report <bounded-xcodebuildmcp-json|->
 bash /path/to/devflow/scripts/dev-flow.sh environment-health run
 ```
 
@@ -172,12 +176,14 @@ Step1 分类、Step2 比对、Step3 修复复验都必须引用该段，不得�
 # 启动（按 DEV_FLOW_SESSION_ID → CODEX_THREAD_ID → CURSOR_CONVERSATION_ID 隔离）
 bash scripts/dev-flow-session.sh start --type feature|bug|ui_review --level trivial|standard|heavy --task "short label"
 
-# 环境检查（按会话 level 裁剪必需项；非必需项 not-required，不参与判定）
-bash scripts/environment-health-check.sh run
-
-# 配置条件门禁后 confirm / approve-commit
+# 配置条件门禁后 confirm-plan（start → 分类/计划 → confirm；confirm 不要求环境门禁）
 bash scripts/dev-flow-session.sh configure-gates --required review,figma_ui,runtime
 bash scripts/dev-flow-session.sh confirm-plan --task "short label"
+
+# 环境检查在 confirm-plan 之后、实现之前跑（按会话 level 裁剪必需项；非必需项 not-required，不参与判定）
+bash scripts/environment-health-check.sh run
+
+# 环境门禁 available 后 approve-commit / commit
 bash scripts/dev-flow-session.sh approve-commit --task "short label"
 
 # 收口提交（需 approve 已批 + 暂存区非空；记录 commit hash）

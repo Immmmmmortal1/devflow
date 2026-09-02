@@ -38,7 +38,7 @@ Session selection:
   Outside Cursor, falls back to "local". Inside Cursor, a missing conversation id is an error.
 Gate note:
   ui_review source repair requires review,runtime,ui_parity before confirm-plan.
-  Environment health must run before confirm-plan and cannot be updated after confirmation.
+  Environment health runs after confirm-plan; record-gate/approve-commit/commit/testflight require it available.
   commit 收口提交动作：approve-commit 已批 + 暂存区非空才会执行 git commit 并记录 hash；
   testflight 委托项目 fastlane：commit 完成且 HEAD 未漂移才执行
   <项目>/.dev-flow/testflight-command 中的命令并登记证据。
@@ -221,8 +221,6 @@ elif action == "configure-gates":
 elif action == "confirm-plan":
     if not data.get("active"):
         raise SystemExit("No active dev-flow session. Run start first.")
-    if data.get("environment_health", {}).get("status") != "available":
-        raise SystemExit("Environment health is not available. Run environment-health-check.sh first.")
     if data.get("type") == "ui_review":
         required = set(data.get("required_gates", []))
         missing = {"review", "runtime", "ui_parity"} - required
@@ -231,10 +229,8 @@ elif action == "confirm-plan":
                 "ui_review source repair requires gates configured before confirm-plan: "
                 + ",".join(sorted(missing))
             )
-    # 环境健康检查必须有 checked_at 时间戳，禁止空值通过 confirm-plan
-    checked_at = data.get("environment_health", {}).get("checked_at")
-    if not isinstance(checked_at, str) or not checked_at.strip():
-        raise SystemExit("Environment health checked_at is missing; run environment-health-check.sh before confirm-plan.")
+    # 环境门禁后移：confirm-plan 不再要求 environment_health；改由 confirm 后的
+    # 敏感动作（record-gate/approve-commit/commit/testflight）统一校验
     # requirements 门禁：存在 pending-human-approval 条目时禁止 confirm-plan
     if project_root:
         req_index = Path(project_root) / ".dev-flow" / "requirements" / "index.json"
@@ -260,10 +256,15 @@ elif action == "confirm-plan":
 elif action == "approve-commit":
     if not data.get("active"):
         raise SystemExit("No active dev-flow session. Run start first.")
-    if data.get("environment_health", {}).get("status") != "available":
-        raise SystemExit("Environment health is not available. Run environment-health-check.sh first.")
     if not data.get("confirmed_at"):
         raise SystemExit("Plan is not confirmed. Run confirm-plan first.")
+    # 环境门禁后移：approve-commit 仍要求 environment_health available 且 checked_at 非空
+    # （shell 层 dev_flow_verify_environment_health 已先行校验，此为深度防御）
+    if data.get("environment_health", {}).get("status") != "available":
+        raise SystemExit("Environment health is not available. Run environment-health-check.sh first.")
+    checked_at = data.get("environment_health", {}).get("checked_at")
+    if not isinstance(checked_at, str) or not checked_at.strip():
+        raise SystemExit("Environment health checked_at is missing; run environment-health-check.sh first.")
     required = data.get("required_gates", ["review"])
     results = data.get("gate_results", {})
     expected = {
@@ -364,6 +365,39 @@ print(state_path)
 PY
 }
 
+# 环境门禁统一校验：confirm 后、敏感动作（record-gate/approve-commit/commit/testflight）前
+# 要求 environment_health.status == available 且 checked_at 非空。
+# 未 confirm 的会话不校验环境（read-only ui_review review 等场景）。
+dev_flow_verify_environment_health() {
+  local state_file="$1"
+  /usr/bin/python3 - "$state_file" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+state_path = Path(sys.argv[1])
+if not state_path.exists():
+    raise SystemExit("No active dev-flow session. Run start first.")
+state = json.loads(state_path.read_text())
+if not state.get("active"):
+    raise SystemExit("No active dev-flow session. Run start first.")
+# 只在 confirm 后校验环境门禁；未 confirm 的 read-only 等场景不要求
+confirmed_at = state.get("confirmed_at")
+if not confirmed_at:
+    raise SystemExit(0)
+env = state.get("environment_health") or {}
+if env.get("status") != "available":
+    raise SystemExit("Environment health is not available. Run environment-health-check.sh first.")
+checked_at = env.get("checked_at")
+if not isinstance(checked_at, str) or not checked_at.strip():
+    raise SystemExit("Environment health checked_at is missing; run environment-health-check.sh first.")
+# 深度防御：confirm 前跑过的 env 不能复用；必须 confirm 后重新跑
+# （record_environment 已拒绝 confirm 前写入，此处防止绕过/旧 state）
+if checked_at < confirmed_at:
+    raise SystemExit("Environment health was recorded before confirm-plan. Re-run environment-health-check.sh after confirm-plan.")
+PY
+}
+
  record_environment() {
    local report_file="$1"
    mkdir -p "$STATE_DIR"
@@ -402,14 +436,16 @@ if not state_path.exists():
 state = json.loads(state_path.read_text())
 if not state.get("active"):
     raise SystemExit("No active dev-flow session. Run start first.")
+# 环境门禁后移：environment-health 只能在 confirm-plan 之后写入有效证据；
+# confirm 前误跑会被拒绝，防止 confirm 前的 env 被 confirm 后复用
+if not state.get("confirmed_at"):
+    raise SystemExit("Environment health can only run after confirm-plan. Run confirm-plan first.")
 # 轻量防伪：环境健康报告必须位于本会话 state 目录内（environment-health-check.sh 的临时产出）
 try:
     report_path.resolve().relative_to(state_path.resolve().parent)
 except ValueError:
     raise SystemExit("Environment report must live inside the session state directory.")
-# plan 确认后禁止更新环境健康，避免确认后环境状态漂移
-if state.get("confirmed_at"):
-    raise SystemExit("Environment health cannot be updated after plan confirmation.")
+# 允许在 confirm-plan 之后更新环境健康（confirm 后重跑反映最新真实环境）
 report = json.loads(report_path.read_text())
 if report.get("producer") != "environment-health-check" or report.get("schema_version") != 1:
     raise SystemExit("Environment report was not produced by environment-health-check.")
@@ -1377,6 +1413,7 @@ case "$cmd" in
   record-gate)
     parse_gate_record_args "$@"
     dev_flow_rules_verify_project_fresh "$STATE_FILE"
+    dev_flow_verify_environment_health "$STATE_FILE"
     record_gate "$GATE_NAME" "$REPORT_FILE"
     dev_flow_rules_print "PROJECT RULES" "$DEV_FLOW_PROJECT_RULES_FILE"
     ;;
@@ -1392,6 +1429,7 @@ case "$cmd" in
     # 双层规则机制第 3 层：commit 闭环，全局+项目规则 hash 都必须仍一致
     dev_flow_rules_verify_project_fresh "$STATE_FILE"
     dev_flow_rules_verify_global_fresh "$STATE_FILE"
+    dev_flow_verify_environment_health "$STATE_FILE"
     write_state "approve-commit" "" "$TASK" "" "" ""
     dev_flow_rules_print "PROJECT RULES" "$DEV_FLOW_PROJECT_RULES_FILE"
     ;;
@@ -1409,11 +1447,13 @@ case "$cmd" in
   commit)
     parse_commit_args "$@"
     dev_flow_rules_verify_project_fresh "$STATE_FILE"
+    dev_flow_verify_environment_health "$STATE_FILE"
     record_commit "$COMMIT_MESSAGE"
     dev_flow_rules_print "PROJECT RULES" "$DEV_FLOW_PROJECT_RULES_FILE"
     ;;
   testflight)
     dev_flow_rules_verify_project_fresh "$STATE_FILE"
+    dev_flow_verify_environment_health "$STATE_FILE"
     record_testflight
     dev_flow_rules_print "PROJECT RULES" "$DEV_FLOW_PROJECT_RULES_FILE"
     ;;

@@ -202,8 +202,9 @@ Daily commands (run from the app repo):
   cd "$PROJECT_ROOT"
   bash "$ROOT/scripts/dev-flow.sh" doctor
   bash "$ROOT/scripts/dev-flow.sh" session start --type bug --task "short label"
-  # after XcodeBuildMCP build_run_device succeeds:
-  bash "$ROOT/scripts/dev-flow.sh" record-app-launch record
+  bash "$ROOT/scripts/dev-flow.sh" app-launch status || bash "$ROOT/scripts/dev-flow.sh" app-launch instructions
+  # after XcodeBuildMCP session_show_defaults + build_run_device succeeds:
+  bash "$ROOT/scripts/dev-flow.sh" app-launch record --report <bounded-xcodebuildmcp-json|->
   bash "$ROOT/scripts/dev-flow.sh" environment-health run
 
 DebugBridge:

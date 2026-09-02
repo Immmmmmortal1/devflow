@@ -25,8 +25,8 @@ Usage:
 
 The command records the report in the current dev-flow session. The caller must first run the
 registered XcodeBuildMCP physical-device launch preflight, then record the bounded result with
-scripts/record-app-launch-report.sh record. By default the App launch probe reads
-.dev-flow/sessions/<session-id>.app-launch.json through scripts/read-app-launch-report.sh.
+scripts/app-launch-preflight.sh record. By default the App launch probe reads and validates
+.dev-flow/sessions/<session-id>.app-launch.json through scripts/app-launch-preflight.sh status.
 Override with DEV_FLOW_APP_LAUNCH_HEALTH_CMD when a custom adapter is required. The stored or
 adapter JSON must include producer=XcodeBuildMCP, schema_version=1, the current session_id,
 status=available, build_run_device=success, device_transport=wired, and app_launched=true. Other
@@ -139,6 +139,12 @@ if valid:
         ),
     }
 else:
+    if payload.get("status") == "blocked" and isinstance(payload.get("evidence"), str) and payload.get("evidence"):
+        print(json.dumps({
+            "status": "blocked",
+            "evidence": payload.get("evidence"),
+        }, ensure_ascii=False))
+        raise SystemExit(0)
     result = {
         "status": "blocked",
         "evidence": "invalid_or_failed_xcodebuildmcp_app_launch_report",
@@ -297,7 +303,7 @@ fi
 
 app_launch_command="${DEV_FLOW_APP_LAUNCH_HEALTH_CMD:-}"
 if [[ -z "$app_launch_command" ]]; then
-  app_launch_command="'$(dev_flow_script_path read-app-launch-report.sh)'"
+  app_launch_command="'$(dev_flow_script_path app-launch-preflight.sh)' status"
 fi
 
 # 按 level 执行必需探针：trivial 只查 review_mcp；standard 查 app_launch+review_mcp；heavy 全 4 项
@@ -312,35 +318,48 @@ print(json.loads(sys.argv[1])["status"])
 PY
 )"
 
-review_command="${DEV_FLOW_REVIEW_MCP_HEALTH_CMD:-}"
-if [[ -n "$review_command" ]]; then
-  review_result="$(run_probe "$review_command" review_mcp)"
-else
-  review_result="$(run_review_probe "'$(dev_flow_script_path review-health-probe.sh)'")"
-fi
-
+review_result=""
 figma_result=""
-if [[ "$SESSION_LEVEL" == "heavy" ]]; then
-  figma_skill_status="available"
-  figma_skill_evidence="skill_and_script_present"
-  if [[ ! -f "$FIGMA_SKILL_ROOT/SKILL.md" ]]; then
-    figma_skill_status="blocked"
-    figma_skill_evidence="skill_file_missing"
-  elif [[ ! -f "$FIGMA_SKILL_ROOT/scripts/figma_rest.py" ]]; then
-    figma_skill_status="blocked"
-    figma_skill_evidence="figma_rest_script_missing"
-  elif [[ -z "${FIGMA_REST_TOKEN:-}" && -z "${DEV_FLOW_FIGMA_REST_HEALTH_CMD:-}" ]]; then
-    figma_skill_status="blocked"
-    figma_skill_evidence="FIGMA_REST_TOKEN_missing"
+debug_result=""
+
+if [[ "$SESSION_LEVEL" != "trivial" && "$app_launch_status" != "available" ]]; then
+  review_result='{"status":"not-run","evidence":"app_launch_preflight_failed"}'
+  if [[ "$SESSION_LEVEL" == "heavy" ]]; then
+    figma_result='{"status":"not-run","evidence":"app_launch_preflight_failed"}'
+    debug_result='{"status":"not-run","evidence":"app_launch_preflight_failed"}'
+  else
+    figma_result='{"status":"not-required","evidence":"skipped_for_level"}'
+    debug_result='{"status":"not-required","evidence":"skipped_for_level"}'
+  fi
+else
+  review_command="${DEV_FLOW_REVIEW_MCP_HEALTH_CMD:-}"
+  if [[ -n "$review_command" ]]; then
+    review_result="$(run_probe "$review_command" review_mcp)"
+  else
+    review_result="$(run_review_probe "'$(dev_flow_script_path review-health-probe.sh)'")"
   fi
 
-  if [[ "$figma_skill_status" == "available" ]]; then
-    if [[ -n "${DEV_FLOW_FIGMA_REST_HEALTH_CMD:-}" ]]; then
-      figma_result="$(run_probe "$DEV_FLOW_FIGMA_REST_HEALTH_CMD" figma_rest)"
-    else
-      figma_result="$(run_probe "/usr/bin/curl -fsS --connect-timeout 5 --max-time 15 -H \"X-Figma-Token: \$FIGMA_REST_TOKEN\" https://api.figma.com/v1/me --output /dev/null" figma_rest)"
+  if [[ "$SESSION_LEVEL" == "heavy" ]]; then
+    figma_skill_status="available"
+    figma_skill_evidence="skill_and_script_present"
+    if [[ ! -f "$FIGMA_SKILL_ROOT/SKILL.md" ]]; then
+      figma_skill_status="blocked"
+      figma_skill_evidence="skill_file_missing"
+    elif [[ ! -f "$FIGMA_SKILL_ROOT/scripts/figma_rest.py" ]]; then
+      figma_skill_status="blocked"
+      figma_skill_evidence="figma_rest_script_missing"
+    elif [[ -z "${FIGMA_REST_TOKEN:-}" && -z "${DEV_FLOW_FIGMA_REST_HEALTH_CMD:-}" ]]; then
+      figma_skill_status="blocked"
+      figma_skill_evidence="FIGMA_REST_TOKEN_missing"
     fi
-    figma_result="$(/usr/bin/python3 - "$figma_skill_evidence" "$figma_result" <<'PY'
+
+    if [[ "$figma_skill_status" == "available" ]]; then
+      if [[ -n "${DEV_FLOW_FIGMA_REST_HEALTH_CMD:-}" ]]; then
+        figma_result="$(run_probe "$DEV_FLOW_FIGMA_REST_HEALTH_CMD" figma_rest)"
+      else
+        figma_result="$(run_probe "/usr/bin/curl -fsS --connect-timeout 5 --max-time 15 -H \"X-Figma-Token: \$FIGMA_REST_TOKEN\" https://api.figma.com/v1/me --output /dev/null" figma_rest)"
+      fi
+      figma_result="$(/usr/bin/python3 - "$figma_skill_evidence" "$figma_result" <<'PY'
 import json
 import sys
 
@@ -351,31 +370,27 @@ if result["status"] == "available":
 print(json.dumps(result, ensure_ascii=False))
 PY
 )"
-  else
-    figma_result="$(/usr/bin/python3 - "$figma_skill_status" "$figma_skill_evidence" <<'PY'
+    else
+      figma_result="$(/usr/bin/python3 - "$figma_skill_status" "$figma_skill_evidence" <<'PY'
 import json
 import sys
 print(json.dumps({"status": sys.argv[1], "evidence": sys.argv[2]}, ensure_ascii=False))
 PY
 )"
+    fi
+  else
+    figma_result='{"status":"not-required","evidence":"skipped_for_level"}'
   fi
-else
-  figma_result='{"status":"not-required","evidence":"skipped_for_level"}'
-fi
 
-debug_result=""
-if [[ "$SESSION_LEVEL" == "heavy" ]]; then
-  if [[ "$app_launch_status" == "available" ]]; then
+  if [[ "$SESSION_LEVEL" == "heavy" ]]; then
     if [[ -n "${DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD:-}" ]]; then
       debug_result="$(run_probe "$debug_command" debugbridge)"
     else
       debug_result="$(run_bridge_session_probe "$debug_command")"
     fi
   else
-    debug_result='{"status":"blocked","evidence":"app_launch_preflight_failed"}'
+    debug_result='{"status":"not-required","evidence":"skipped_for_level"}'
   fi
-else
-  debug_result='{"status":"not-required","evidence":"skipped_for_level"}'
 fi
 
 /usr/bin/python3 - "$REPORT_FILE" "$SESSION_ID" "$app_launch_result" "$debug_result" "$review_result" "$figma_result" "$SESSION_LEVEL" <<'PY'

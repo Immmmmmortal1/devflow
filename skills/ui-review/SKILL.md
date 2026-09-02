@@ -27,11 +27,13 @@ Step 6  Record review/runtime/ui_parity gates → commit handoff
 Before Step 1, the dev-flow router owns:
 
 1. `dev-flow-session.sh start --type ui_review`
-2. `environment-health-check` — physical App launch preflight, DebugBridge, Review MCP, and
-   figma-rest-api must all be `available`
-   (this is the dev-flow first gate; `ui-review` does not replace it with its own partial preflight)
-3. Do not configure repair-only gates yet. Step 2 is read-only and may conclude with no findings.
+2. Do not configure repair-only gates yet. Step 2 is read-only and may conclude with no findings.
    If Step 3.1 produces a non-empty `units_to_fix`, then **before `confirm-plan`** configure:
+3. `confirm-plan` then `environment-health-check` — physical App launch preflight, DebugBridge,
+   Review MCP, and figma-rest-api must all be `available` (environment-health runs after
+   confirm-plan; `ui-review` does not replace it with its own partial preflight. A read-only
+   review that never edits source skips `confirm-plan` and may record a bounded read-only
+   review result without environment-health)
 
 ```bash
 bash scripts/dev-flow-session.sh configure-gates --required review,runtime,ui_parity

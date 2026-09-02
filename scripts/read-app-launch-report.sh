@@ -11,7 +11,10 @@ SESSION_ID="$(resolve_dev_flow_session_id)" || exit $?
 REPORT_FILE="$STATE_DIR/$SESSION_ID.app-launch.json"
 
 if [[ ! -f "$REPORT_FILE" ]]; then
-  echo "No app launch report for session $SESSION_ID. Run record-app-launch-report.sh after build_run_device." >&2
+  echo "No app launch report for session $SESSION_ID." >&2
+  echo "Run: bash \"$(dev_flow_script_path dev-flow.sh)\" app-launch instructions" >&2
+  echo "Then record the bounded XcodeBuildMCP result with:" >&2
+  echo "  bash \"$(dev_flow_script_path dev-flow.sh)\" app-launch record --report <path|->" >&2
   exit 1
 fi
 

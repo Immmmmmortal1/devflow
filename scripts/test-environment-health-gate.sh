@@ -67,20 +67,36 @@ PY
 }
 
 run_for healthy start --type feature --task "healthy task" >/dev/null
-if run_for healthy confirm-plan >/dev/null 2>&1; then
-  echo "FAIL: confirm-plan bypassed environment health" >&2
-  exit 1
-fi
-run_health_for healthy >/dev/null
+# 环境门禁后移：confirm-plan 不再要求 environment-health
 run_for healthy confirm-plan >/dev/null
-if run_for healthy approve-commit >/dev/null 2>&1; then
-  echo "FAIL: approve-commit bypassed required review gate" >&2
+# 写 review pass 报告（confirm 后、未跑 env 时 record-gate 应失败）
+/usr/bin/python3 - "$TMP_ROOT/review-healthy.json" healthy <<'PY'
+import json, sys
+from pathlib import Path
+Path(sys.argv[1]).write_text(json.dumps({
+    "producer": "code-review-workflow", "schema_version": 1,
+    "session_id": sys.argv[2], "gate": "review",
+    "status": "pass", "reviewer_result": "pass",
+    "evidence": "test review pass",
+}) + "\n")
+PY
+if run_for healthy record-gate --name review --report "$TMP_ROOT/review-healthy.json" >/dev/null 2>&1; then
+  echo "FAIL: record-gate passed without environment health after confirm" >&2
   exit 1
 fi
-record_review_for healthy
+if run_for healthy approve-commit >/dev/null 2>&1; then
+  echo "FAIL: approve-commit passed without environment health after confirm" >&2
+  exit 1
+fi
+# 跑 env 后 available，record-gate/approve-commit 通过
+run_health_for healthy >/dev/null
+run_for healthy record-gate --name review --report "$TMP_ROOT/review-healthy.json" >/dev/null
 run_for healthy approve-commit >/dev/null
 
 run_for blocked start --type bug --level heavy --task "blocked task" >/dev/null
+# 环境门禁后移：confirm-plan 不要求 env，即使未跑 env 也能 confirm
+run_for blocked confirm-plan >/dev/null
+# confirm 后跑 env，debugbridge blocked → env blocked
 if DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=blocked \
   DEV_FLOW_TEST_MODE=1 \
   DEV_FLOW_APP_LAUNCH_HEALTH_CMD="$TMP_ROOT/bin/app-launch-probe" \
@@ -91,8 +107,9 @@ if DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=blocked \
   echo "FAIL: blocked environment health returned success" >&2
   exit 1
 fi
-if run_for blocked confirm-plan >/dev/null 2>&1; then
-  echo "FAIL: blocked environment reached confirm-plan" >&2
+# env blocked 时 approve-commit 失败
+if run_for blocked approve-commit >/dev/null 2>&1; then
+  echo "FAIL: approve-commit passed with blocked environment" >&2
   exit 1
 fi
 
@@ -125,12 +142,13 @@ assert healthy["confirmed_at"] is not None
 assert healthy["commit_approved_at"] is not None
 assert blocked["environment_health"]["status"] == "blocked"
 assert blocked["environment_health"]["checks"]["debugbridge"]["status"] == "blocked"
-assert blocked["confirmed_at"] is None
+assert blocked["confirmed_at"] is not None  # 环境门禁后移：blocked 也能 confirm
 PY
 
 # 生产模式（未设 DEV_FLOW_TEST_MODE）下忽略 DEV_FLOW_*_HEALTH_CMD 覆盖，仍走默认探针
 # 用 heavy 级别验证全 4 项都走默认探针
 run_for prod-mode start --type feature --level heavy --task "prod mode health cmd ignored" >/dev/null
+run_for prod-mode confirm-plan >/dev/null
 # 先写入合法 app-launch 报告（生产模式 app_launch 走 read-app-launch-report.sh 读这个文件）
 /usr/bin/python3 - "$TMP_ROOT/.dev-flow/sessions/prod-mode.app-launch.json" <<'PY'
 import json, sys
@@ -164,4 +182,49 @@ assert debugbridge["status"] == "blocked", debugbridge
 assert "probe_exit_0" not in debugbridge["evidence"], debugbridge["evidence"]
 PY
 
-echo "PASS: environment health is recorded and required before confirmation/commit"
+# 深度防御：confirm 前跑过的 env（checked_at < confirmed_at）不能用于敏感动作
+run_for stale start --type feature --level trivial --task "stale env" >/dev/null
+run_for stale confirm-plan >/dev/null
+# 手动构造 state：env available 但 checked_at 远早于 confirmed_at（模拟 confirm 前跑过的 env）
+/usr/bin/python3 - "$TMP_ROOT/.dev-flow/sessions/stale.json" <<'PY'
+import json, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+state = json.loads(p.read_text())
+state["environment_health"] = {
+    "status": "available",
+    "checked_at": "2020-01-01T00:00:00Z",
+    "checks": {
+        "app_launch": {"status": "not-required", "evidence": "skipped_for_trivial_level"},
+        "debugbridge": {"status": "not-required", "evidence": "skipped_for_level"},
+        "review_mcp": {"status": "available", "evidence": "probe_exit_0"},
+        "figma_rest_api": {"status": "not-required", "evidence": "skipped_for_level"},
+    },
+}
+p.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n")
+PY
+/usr/bin/python3 - "$TMP_ROOT/review-stale.json" "stale" <<'PY'
+import json, sys
+from pathlib import Path
+Path(sys.argv[1]).write_text(json.dumps({
+    "producer": "code-review-workflow", "schema_version": 1,
+    "session_id": sys.argv[2], "gate": "review",
+    "status": "pass", "reviewer_result": "pass",
+    "evidence": "test review pass",
+}) + "\n")
+PY
+# record-gate/approve-commit 失败（checked_at < confirmed_at，深度防御）
+if run_for stale record-gate --name review --report "$TMP_ROOT/review-stale.json" >/dev/null 2>&1; then
+  echo "FAIL: record-gate passed with env checked before confirm-plan" >&2
+  exit 1
+fi
+if run_for stale approve-commit >/dev/null 2>&1; then
+  echo "FAIL: approve-commit passed with env checked before confirm-plan" >&2
+  exit 1
+fi
+# confirm 后重新跑 env（checked_at >= confirmed_at）后通过
+run_health_for stale >/dev/null
+run_for stale record-gate --name review --report "$TMP_ROOT/review-stale.json" >/dev/null
+run_for stale approve-commit >/dev/null
+
+echo "PASS: environment health runs after confirm-plan; required before gates/commit"

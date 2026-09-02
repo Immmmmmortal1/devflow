@@ -130,7 +130,8 @@ manifest = {
     "ai_next_steps": [
         "Ask the user to restart Cursor/Codex MCP so XcodeBuildMCP reloads with device workflows",
         "dev-flow session start, then session_set_defaults profile=<session-id> createIfNotExists=true",
-        "build_run_device on a wired physical device, then dev-flow record-app-launch record",
+        "session_show_defaults, then build_run_device on a wired physical device with DEV_FLOW_SESSION_ID",
+        "dev-flow app-launch record --report <bounded-xcodebuildmcp-json|->, then environment-health run",
     ],
 }
 Path("$STATE_DIR/xcodebuild-mcp-install.json").write_text(

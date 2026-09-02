@@ -10,8 +10,8 @@ description: Use when a selected development workflow needs an explicit availabi
 Provide an evidence-backed availability report for the development capabilities that support UI
 implementation, UI review, and runtime verification. The DebugBridge check has a mandatory physical
 App launch preflight: an App that is not running cannot prove that its in-App DebugBridge is usable.
-When invoked by `dev-flow`, this is the first gate after route classification; when invoked
-independently, it only reports health and does not select or change a route.
+When invoked by `dev-flow`, this gate runs after `confirm-plan` and before implementation; when
+invoked independently, it only reports health and does not select or change a route.
 
 ## Checks
 
@@ -39,10 +39,13 @@ registered XcodeBuildMCP tools in this exact order:
 
 ```bash
 cd <app-root>
-bash /path/to/devflow/scripts/dev-flow.sh record-app-launch record
+bash /path/to/devflow/scripts/dev-flow.sh app-launch record --report <bounded-xcodebuildmcp-json|->
+bash /path/to/devflow/scripts/dev-flow.sh app-launch status
 ```
 
-Use `--report <path>` only when importing an already bounded XcodeBuildMCP JSON payload.
+Use `app-launch instructions` when the current session has no App launch report. `--report <path|->`
+is required and must import an already bounded XcodeBuildMCP JSON payload; the gate must never
+invent a successful launch report.
 4. Only after a successful build, install, launch, and record step may the DebugBridge check call
    `ensure_ports`, then `ping`.
 
@@ -59,13 +62,14 @@ bash /path/to/devflow/scripts/dev-flow.sh environment-health run
 The script records the report in the current `.dev-flow/sessions/<session-id>.json` and exits
 non-zero when any check is `blocked` or `not-run`. Use `DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD` when the
 registered service requires a local probe adapter. The App launch probe defaults to
-`scripts/read-app-launch-report.sh` after `scripts/record-app-launch-report.sh record`. Review MCP
-health defaults to `scripts/review-health-probe.sh`, which falls back to `gstack-review` when
+`scripts/app-launch-preflight.sh status` after `scripts/app-launch-preflight.sh record --report`.
+Review MCP health defaults to `scripts/review-health-probe.sh`, which falls back to `gstack-review` when
 orchestrator MCP is unavailable. Override with `DEV_FLOW_REVIEW_MCP_HEALTH_CMD` only for tests or
 custom adapters. The script can use a sibling `orchestrator-mcp/scripts/orchestrator-doctor.sh`
 through that probe; do not replace a failed probe with a hand-written `available` result.
-`dev-flow-session.sh` rejects `confirm-plan` and `approve-commit` until the recorded status is
-`available`.
+`dev-flow-session.sh` requires `confirm-plan` before this gate can record evidence; after
+confirmation, `record-gate`, `approve-commit`, `commit`, and `testflight` reject sessions whose
+recorded status is not `available` (and `checked_at` must be on or after `confirmed_at`).
 
 ### 1. DebugBridge
 
@@ -136,10 +140,11 @@ current App launch preflight succeeded and the subsequent `ensure_ports` and `pi
 `blocked` means the check ran but the capability cannot be used. `not-run` means the check could not
 be attempted; never convert it to `available`.
 
-When invoked by `dev-flow`, every capability must be `available` before the selected route starts;
-`blocked` or `not-run` stops that route. When invoked independently, the caller decides how to use
-the report. This skill reports health; it does not approve requirements, authorize source edits,
-select a review route, or approve a commit.
+When invoked by `dev-flow`, every capability required by the current session level must be
+`available` after `confirm-plan` and before implementation, gate recording, commit approval,
+commit, or TestFlight; `blocked` or `not-run` stops those actions. When invoked independently, the
+caller decides how to use the report. This skill reports health; it does not approve requirements,
+authorize source edits, select a review route, or approve a commit.
 
 ## Safety rules
 

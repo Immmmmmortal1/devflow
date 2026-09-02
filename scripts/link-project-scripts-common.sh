@@ -44,6 +44,7 @@ link_project_scripts_tree() {
     DEV_FLOW_SCRIPTS_VERSION
     resolve-dev-flow-session-id.sh
     dev-flow-session.sh
+    app-launch-preflight.sh
     environment-health-check.sh
     record-app-launch-report.sh
     read-app-launch-report.sh

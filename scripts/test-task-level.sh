@@ -52,10 +52,10 @@ run_health_all() {
     /bin/bash "$ROOT/scripts/environment-health-check.sh" run "$@"
 }
 
-# 用例 1：trivial 只要求 review_mcp，其他 not-required，env available + confirm-plan 通过
+# 用例 1：trivial 只要求 review_mcp，其他 not-required，confirm → env → available
 run_for trivial start --type feature --level trivial --task "trivial task" >/dev/null
-run_health_review_only trivial >/dev/null
 run_for trivial confirm-plan >/dev/null
+run_health_review_only trivial >/dev/null
 /usr/bin/python3 - "$TMP_ROOT/.dev-flow/sessions/trivial.json" <<'PY'
 import json, sys
 from pathlib import Path
@@ -80,6 +80,7 @@ run_for trivial-g configure-gates --required review >/dev/null
 
 # 用例 3：standard（默认）要求 app_launch + review_mcp；app_launch 缺 → blocked
 run_for std start --type feature --task "standard task" >/dev/null
+run_for std confirm-plan >/dev/null
 if run_health_review_only std >/dev/null 2>&1; then
   echo "FAIL: standard environment passed without app_launch" >&2
   exit 1
@@ -92,12 +93,13 @@ checks = state["environment_health"]["checks"]
 assert state["level"] == "standard", state
 assert state["environment_health"]["status"] == "blocked", state["environment_health"]
 assert checks["app_launch"]["status"] == "blocked", checks
-assert checks["review_mcp"]["status"] == "available", checks
+assert checks["review_mcp"]["status"] == "not-run", checks
 assert checks["debugbridge"]["status"] == "not-required", checks
 PY
 
 # 用例 4：heavy 要求全 4 项；全探针通过 → available；缺 figma → blocked
 run_for hvy start --type feature --level heavy --task "heavy task" >/dev/null
+run_for hvy confirm-plan >/dev/null
 run_health_all hvy >/dev/null
 /usr/bin/python3 - "$TMP_ROOT/.dev-flow/sessions/hvy.json" <<'PY'
 import json, sys
@@ -111,6 +113,7 @@ PY
 
 # 用例 4b：heavy 缺 figma 探针 → blocked（figma 是必需项）
 run_for hvy-figma start --type feature --level heavy --task "heavy no figma" >/dev/null
+run_for hvy-figma confirm-plan >/dev/null
 if DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=hvy-figma \
   DEV_FLOW_TEST_MODE=1 \
   FIGMA_REST_TOKEN= \
@@ -168,10 +171,10 @@ fi
 run_for hvy-gates start --type feature --level heavy --task "heavy gates" >/dev/null
 run_for hvy-gates configure-gates --required review,runtime >/dev/null
 
-# 用例 9：trivial 完整链路：env → confirm → review pass → approve-commit
+# 用例 9：trivial 完整链路：confirm → env → review pass → approve-commit
 run_for tri-full start --type feature --level trivial --task "trivial full chain" >/dev/null
-run_health_review_only tri-full >/dev/null
 run_for tri-full confirm-plan >/dev/null
+run_health_review_only tri-full >/dev/null
 /usr/bin/python3 - "$TMP_ROOT" "tri-full" <<'PY'
 import json, sys
 from pathlib import Path
@@ -186,5 +189,60 @@ session_id = sys.argv[2]
 PY
 run_for tri-full record-gate --name review --report "$TMP_ROOT/review-tri-full.json" >/dev/null
 run_for tri-full approve-commit >/dev/null
+
+# 用例 10：环境门禁后移——confirm-plan 不要求 environment-health；confirm 后未跑 env 时
+# record-gate/approve-commit/commit/testflight 失败；跑 env 后恢复
+run_for noenv start --type feature --level trivial --task "no env" >/dev/null
+# confirm-plan 不需要先 environment-health（直接通过）
+run_for noenv confirm-plan >/dev/null
+/usr/bin/python3 - "$TMP_ROOT/review-noenv.json" "noenv" <<'PY'
+import json, sys
+from pathlib import Path
+Path(sys.argv[1]).write_text(json.dumps({
+    "producer": "code-review-workflow", "schema_version": 1,
+    "session_id": sys.argv[2], "gate": "review",
+    "status": "pass", "reviewer_result": "pass",
+    "evidence": "test review pass",
+}) + "\n")
+PY
+# confirm 后未跑 env：record-gate/approve-commit/commit/testflight 均失败（环境门禁）
+if run_for noenv record-gate --name review --report "$TMP_ROOT/review-noenv.json" >/dev/null 2>&1; then
+  echo "FAIL: record-gate passed without environment health after confirm" >&2
+  exit 1
+fi
+if run_for noenv approve-commit >/dev/null 2>&1; then
+  echo "FAIL: approve-commit passed without environment health after confirm" >&2
+  exit 1
+fi
+if run_for noenv commit --message "should fail" >/dev/null 2>&1; then
+  echo "FAIL: commit passed without environment health after confirm" >&2
+  exit 1
+fi
+if run_for noenv testflight >/dev/null 2>&1; then
+  echo "FAIL: testflight passed without environment health after confirm" >&2
+  exit 1
+fi
+# 跑 env 后 available，record-gate/approve-commit 通过
+run_health_review_only noenv >/dev/null
+run_for noenv record-gate --name review --report "$TMP_ROOT/review-noenv.json" >/dev/null
+run_for noenv approve-commit >/dev/null
+
+# 用例 11：confirm 前误跑 environment-health 失败（不能写有效 state）；confirm 后重跑才成功
+run_for preenv start --type feature --level trivial --task "pre-confirm env" >/dev/null
+if run_health_review_only preenv >/dev/null 2>&1; then
+  echo "FAIL: environment-health ran before confirm-plan" >&2
+  exit 1
+fi
+# state 不应被写入有效 environment_health（record_environment 拒绝 confirm 前写入）
+/usr/bin/python3 - "$TMP_ROOT/.dev-flow/sessions/preenv.json" <<'PY'
+import json, sys
+from pathlib import Path
+state = json.loads(Path(sys.argv[1]).read_text())
+assert state["environment_health"]["status"] == "not-run", state["environment_health"]
+assert state["environment_health"]["checked_at"] is None, state["environment_health"]
+PY
+# confirm 后重新跑 env 才成功
+run_for preenv confirm-plan >/dev/null
+run_health_review_only preenv >/dev/null
 
 echo "PASS: task level trims environment checks and gate configuration"

@@ -14,6 +14,7 @@ Commands:
   init [app-root]                 Bind an app repo to this dev-flow clone
   doctor [app-root]               Verify source + project binding
   session ...                     dev-flow-session.sh ...
+  app-launch ...                  app-launch-preflight.sh status|instructions|template|record
   environment-health run          environment-health-check.sh run
   record-app-launch record [...]  record-app-launch-report.sh record [...]
 
@@ -56,6 +57,9 @@ case "$cmd" in
     ;;
   session)
     exec bash "$(dev_flow_script_path dev-flow-session.sh)" "$@"
+    ;;
+  app-launch)
+    exec bash "$(dev_flow_script_path app-launch-preflight.sh)" "$@"
     ;;
   environment-health)
     exec bash "$(dev_flow_script_path environment-health-check.sh)" "$@"

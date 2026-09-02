@@ -43,5 +43,7 @@ echo
 echo "Run gates from the app repo with:"
 echo "  cd \"$PROJECT_ROOT\""
 echo "  bash \"$DEV_FLOW_SOURCE_ROOT/scripts/dev-flow.sh\" doctor"
-echo "  bash \"$DEV_FLOW_SOURCE_ROOT/scripts/dev-flow.sh\" record-app-launch record"
+echo "  bash \"$DEV_FLOW_SOURCE_ROOT/scripts/dev-flow.sh\" app-launch status || bash \"$DEV_FLOW_SOURCE_ROOT/scripts/dev-flow.sh\" app-launch instructions"
+echo "  # after XcodeBuildMCP session_show_defaults + build_run_device succeeds:"
+echo "  bash \"$DEV_FLOW_SOURCE_ROOT/scripts/dev-flow.sh\" app-launch record --report <bounded-xcodebuildmcp-json|->"
 echo "  bash \"$DEV_FLOW_SOURCE_ROOT/scripts/dev-flow.sh\" environment-health run"

@@ -29,6 +29,9 @@ DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=gate-test \
   DEV_FLOW_FIGMA_REST_HEALTH_CMD=/usr/bin/true \
   /bin/bash "$ROOT/scripts/dev-flow-session.sh" start --type feature --level heavy --task "gate test" >/dev/null
 
+run_for configure-gates --required review,figma_ui,runtime >/dev/null
+run_for confirm-plan >/dev/null
+
 DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=gate-test \
   DEV_FLOW_TEST_MODE=1 \
   DEV_FLOW_APP_LAUNCH_HEALTH_CMD="$TMP_ROOT/bin/app-launch-probe" \
@@ -36,9 +39,6 @@ DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=gate-test \
   DEV_FLOW_REVIEW_MCP_HEALTH_CMD=/usr/bin/true \
   DEV_FLOW_FIGMA_REST_HEALTH_CMD=/usr/bin/true \
   /bin/bash "$ROOT/scripts/environment-health-check.sh" run >/dev/null
-
-run_for configure-gates --required review,figma_ui,runtime >/dev/null
-run_for confirm-plan >/dev/null
 
 write_report() {
   local name="$1"
@@ -205,13 +205,7 @@ Path(sys.argv[1]).write_text(json.dumps({
     "requirements": [{"id": "req-1", "status": "pending-human-approval"}],
 }) + "\n")
 PY
-DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=req-blocked \
-  DEV_FLOW_TEST_MODE=1 \
-  DEV_FLOW_APP_LAUNCH_HEALTH_CMD="$TMP_ROOT/bin/app-launch-probe" \
-  DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD=/usr/bin/true \
-  DEV_FLOW_REVIEW_MCP_HEALTH_CMD=/usr/bin/true \
-  DEV_FLOW_FIGMA_REST_HEALTH_CMD=/usr/bin/true \
-  /bin/bash "$ROOT/scripts/environment-health-check.sh" run >/dev/null
+# confirm-plan 在 pending 时失败（不要求 env，requirements pending 拒绝）
 if DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=req-blocked \
   /bin/bash "$ROOT/scripts/dev-flow-session.sh" confirm-plan >/dev/null 2>&1; then
   echo "FAIL: confirm-plan accepted with pending-human-approval requirements" >&2
@@ -227,5 +221,13 @@ Path(sys.argv[1]).write_text(json.dumps({
 PY
 DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=req-blocked \
   /bin/bash "$ROOT/scripts/dev-flow-session.sh" confirm-plan >/dev/null
+# confirm 后跑 env
+DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=req-blocked \
+  DEV_FLOW_TEST_MODE=1 \
+  DEV_FLOW_APP_LAUNCH_HEALTH_CMD="$TMP_ROOT/bin/app-launch-probe" \
+  DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD=/usr/bin/true \
+  DEV_FLOW_REVIEW_MCP_HEALTH_CMD=/usr/bin/true \
+  DEV_FLOW_FIGMA_REST_HEALTH_CMD=/usr/bin/true \
+  /bin/bash "$ROOT/scripts/environment-health-check.sh" run >/dev/null
 
 echo "PASS: G0-G12, review, and runtime gates block commit approval until resolved"

@@ -17,7 +17,8 @@ cat > "$TMP_ROOT/bin/app-launch-probe" <<'EOF'
 import json, sys
 print(json.dumps({"producer":"XcodeBuildMCP","schema_version":1,"session_id":sys.argv[1],
                   "status":"available","build_run_device":"success",
-                  "device_transport":"wired","app_launched":True}))
+                  "device_transport":"wired","app_launched":True,
+                  "build_id":"build-fallback-1","device_id":"device-fallback-1"}))
 PY
 EOF
 /bin/chmod +x "$TMP_ROOT/bin/app-launch-probe"
@@ -49,6 +50,8 @@ PY
 
 DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=fallback-session \
   /bin/bash "$ROOT/scripts/dev-flow-session.sh" start --type feature --task "review fallback" >/dev/null
+DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=fallback-session \
+  /bin/bash "$ROOT/scripts/dev-flow-session.sh" confirm-plan >/dev/null
 
 DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=fallback-session \
   HOME="$TMP_ROOT/home" \

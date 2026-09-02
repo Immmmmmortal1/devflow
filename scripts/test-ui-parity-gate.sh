@@ -29,14 +29,6 @@ DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SES
   DEV_FLOW_FIGMA_REST_HEALTH_CMD=/usr/bin/true \
   /bin/bash "$ROOT/scripts/dev-flow-session.sh" start --type ui_review --level heavy --task "parity gate" >/dev/null
 
-DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=parity-test \
-  DEV_FLOW_TEST_MODE=1 \
-  DEV_FLOW_APP_LAUNCH_HEALTH_CMD="$TMP_ROOT/bin/app-launch-probe" \
-  DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD=/usr/bin/true \
-  DEV_FLOW_REVIEW_MCP_HEALTH_CMD=/usr/bin/true \
-  DEV_FLOW_FIGMA_REST_HEALTH_CMD=/usr/bin/true \
-  /bin/bash "$ROOT/scripts/environment-health-check.sh" run >/dev/null
-
 if run_for confirm-plan >/dev/null 2>&1; then
   echo "FAIL: ui_review confirm-plan passed without runtime/ui_parity gates" >&2
   exit 1
@@ -44,6 +36,14 @@ fi
 
 run_for configure-gates --required review,runtime,ui_parity >/dev/null
 run_for confirm-plan >/dev/null
+
+DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=parity-test \
+  DEV_FLOW_TEST_MODE=1 \
+  DEV_FLOW_APP_LAUNCH_HEALTH_CMD="$TMP_ROOT/bin/app-launch-probe" \
+  DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD=/usr/bin/true \
+  DEV_FLOW_REVIEW_MCP_HEALTH_CMD=/usr/bin/true \
+  DEV_FLOW_FIGMA_REST_HEALTH_CMD=/usr/bin/true \
+  /bin/bash "$ROOT/scripts/environment-health-check.sh" run >/dev/null
 
 # Build bounded authorization, verification, and acceptance evidence.
 /bin/mkdir -p "$TMP_ROOT/artifacts/groups/2985_1"
@@ -358,13 +358,6 @@ DEV_FLOW_SESSION_ID=parity-read-only \
   DEV_FLOW_REVIEW_MCP_HEALTH_CMD=/usr/bin/true \
   DEV_FLOW_FIGMA_REST_HEALTH_CMD=/usr/bin/true \
   /bin/bash "$ROOT/scripts/dev-flow-session.sh" start --type ui_review --level heavy --task "read only" >/dev/null
-DEV_FLOW_SESSION_ID=parity-read-only \
-  DEV_FLOW_TEST_MODE=1 \
-  DEV_FLOW_APP_LAUNCH_HEALTH_CMD="$TMP_ROOT/bin/app-launch-probe" \
-  DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD=/usr/bin/true \
-  DEV_FLOW_REVIEW_MCP_HEALTH_CMD=/usr/bin/true \
-  DEV_FLOW_FIGMA_REST_HEALTH_CMD=/usr/bin/true \
-  /bin/bash "$ROOT/scripts/environment-health-check.sh" run >/dev/null
 
 /usr/bin/python3 - "$TMP_ROOT/artifacts" "$TMP_ROOT/read-only-artifacts" <<'PY'
 import hashlib

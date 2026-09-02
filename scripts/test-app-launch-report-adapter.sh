@@ -43,6 +43,33 @@ run_health_for() {
 }
 
 run_for adapter-session start --type feature --task "adapter session" >/dev/null
+run_for adapter-session confirm-plan >/dev/null
+
+if DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=adapter-session \
+  /bin/bash "$ROOT/scripts/dev-flow.sh" app-launch status >"$TMP_ROOT/status-missing.json" 2>/dev/null; then
+  echo "FAIL: app-launch status passed without a recorded report" >&2
+  exit 1
+fi
+/usr/bin/python3 - "$TMP_ROOT/status-missing.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+payload = json.loads(Path(sys.argv[1]).read_text())
+assert payload["status"] == "blocked", payload
+assert payload["evidence"] == "app_launch_report_missing;run_xcodebuildmcp_session_show_defaults_then_build_run_device", payload
+assert payload["required_tools"] == ["session_show_defaults", "build_run_device"], payload
+PY
+
+DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=adapter-session \
+  /bin/bash "$ROOT/scripts/dev-flow.sh" app-launch template >"$TMP_ROOT/template.json"
+/usr/bin/python3 - "$TMP_ROOT/template.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+payload = json.loads(Path(sys.argv[1]).read_text())
+assert payload["session_id"] == "adapter-session", payload
+assert payload["producer"] == "XcodeBuildMCP", payload
+PY
 
 if run_health_for adapter-session >/dev/null 2>&1; then
   echo "FAIL: health check passed without a recorded app launch report" >&2
@@ -56,8 +83,9 @@ from pathlib import Path
 
 state = json.loads(Path(sys.argv[1]).read_text())
 evidence = state["environment_health"]["checks"]["app_launch"]["evidence"]
-assert evidence == "invalid_or_failed_xcodebuildmcp_app_launch_report", evidence
+assert evidence == "app_launch_report_missing;run_xcodebuildmcp_session_show_defaults_then_build_run_device", evidence
 assert evidence != "app_launch_probe_not_configured"
+assert state["environment_health"]["checks"]["review_mcp"]["status"] == "not-run", state
 PY
 
 DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=adapter-session \
@@ -74,7 +102,6 @@ PY
 DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=adapter-session \
   /bin/bash "$ROOT/scripts/record-app-launch-report.sh" record --report "$TMP_ROOT/adapter-launch-source.json" >/dev/null
 run_health_for adapter-session >/dev/null
-run_for adapter-session confirm-plan >/dev/null
 
 if DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=other-session \
   run_health_for other-session >/dev/null 2>&1; then
@@ -114,6 +141,7 @@ EOF
 /bin/chmod +x "$TMP_ROOT/bin/custom-probe"
 
 run_for override-session start --type feature --task "override probe" >/dev/null
+run_for override-session confirm-plan >/dev/null
 if ! DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=override-session \
   DEV_FLOW_TEST_MODE=1 \
   DEV_FLOW_APP_LAUNCH_HEALTH_CMD="$TMP_ROOT/bin/custom-probe" \

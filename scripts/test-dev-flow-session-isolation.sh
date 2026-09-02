@@ -43,15 +43,17 @@ if run_for thread-invalid start --type ui_new --task "must be rejected" >/dev/nu
   echo "FAIL: ui_new must not be an independent session type" >&2
   exit 1
 fi
-run_health_for thread-a
 run_for thread-a confirm-plan >/dev/null
+run_health_for thread-a
 run_for thread-a end >/dev/null
 
 # Cursor conversation ids must isolate without DEV_FLOW_SESSION_ID / CODEX_THREAD_ID.
+CODEX_THREAD_ID= \
   CURSOR_CONVERSATION_ID=bd225fc5-4f36-47e2-876e-8d9d125033a1 \
   DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" \
   /bin/bash "$ROOT/scripts/dev-flow-session.sh" start --type ui_review --level heavy --task "cursor chat a" >/dev/null
-CURSOR_CONVERSATION_ID=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee \
+CODEX_THREAD_ID= \
+  CURSOR_CONVERSATION_ID=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee \
   DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" \
   /bin/bash "$ROOT/scripts/dev-flow-session.sh" start --type bug --task "cursor chat b" >/dev/null
 
@@ -102,7 +104,8 @@ assert json.loads(cursor_b.read_text())["task"] == "cursor chat b"
 PY
 
 resolved="$(
-  CURSOR_CONVERSATION_ID=bd225fc5-4f36-47e2-876e-8d9d125033a1 \
+  CODEX_THREAD_ID= \
+    CURSOR_CONVERSATION_ID=bd225fc5-4f36-47e2-876e-8d9d125033a1 \
     /bin/bash "$ROOT/scripts/resolve-dev-flow-session-id.sh"
 )"
 if [[ "$resolved" != "bd225fc5-4f36-47e2-876e-8d9d125033a1" ]]; then
