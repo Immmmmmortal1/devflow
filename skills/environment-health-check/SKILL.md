@@ -60,16 +60,16 @@ The resolver outputs bounded JSON with `target_kind` (`physical` or `simulator`)
 seed `session_set_defaults`. If the resolver is `blocked`, ask the user or explicitly discover a
 target; do not auto-scan.
 
-Then expose the deferred tools with the tool_search query matching the resolver's `launch_action`:
+Then confirm the required XcodeBuildMCP tools are actually callable in the current agent turn,
+matching the resolver's `launch_action`:
 
-1. Physical target (`target_kind=physical`, `launch_action=build_run_device`):
-   `tool_search("XcodeBuildMCP session_set_defaults session_show_defaults build_run_device device iOS")`
-   Continue only if the actual callable tools include `session_set_defaults`,
-   `session_show_defaults`, and `build_run_device`; do not guess tool names or use shell builds.
-2. Simulator target (`target_kind=simulator`, `launch_action=build_run_sim`):
-   `tool_search("XcodeBuildMCP session_set_defaults session_show_defaults build_run_sim simulator iOS")`
-   Continue only if the actual callable tools include `session_set_defaults`,
-   `session_show_defaults`, and `build_run_sim`; do not guess tool names or use shell builds.
+1. Physical target (`target_kind=physical`, `launch_action=build_run_device`): the callable tools
+   must include `session_set_defaults`, `session_show_defaults`, and `build_run_device`.
+2. Simulator target (`target_kind=simulator`, `launch_action=build_run_sim`): the callable tools
+   must include `session_set_defaults`, `session_show_defaults`, and `build_run_sim`.
+
+If any of these tools is not callable, stop and report that XcodeBuildMCP was not callable; do not
+guess tool names, use shell builds, or call any unrelated tool as a substitute.
 
 Then: `session_set_defaults` `profile` = current session id (`DEV_FLOW_SESSION_ID`, then
 `CODEX_THREAD_ID`, then `CURSOR_CONVERSATION_ID`; never `local` inside Cursor) and

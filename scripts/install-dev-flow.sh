@@ -233,7 +233,7 @@ Review backend:
 XcodeBuildMCP:
   - Manifest: .dev-flow/xcodebuild-mcp-install.json
   - Project config: .xcodebuildmcp/config.yaml
-  - Ask the user to restart MCP host if reloading is needed, then tool_search → session_set_defaults → session_show_defaults → build_run_device|build_run_sim (resolver launch_action) on the chosen target
+  - Ask the user to restart MCP host if reloading is needed, then confirm session_set_defaults / session_show_defaults / build_run_device|build_run_sim are callable, then session_set_defaults → session_show_defaults → build_run_device|build_run_sim (resolver launch_action) on the chosen target
 
 Figma token: set FIGMA_REST_TOKEN or FIGMA_ACCESS_TOKEN in the environment.
 EOF

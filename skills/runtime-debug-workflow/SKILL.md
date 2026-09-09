@@ -26,13 +26,14 @@ Use the registered tools in this order:
    (`build_run_device` or `build_run_sim`). Use the resolver's `profile` fields to seed
    `session_set_defaults`. If the resolver is `blocked`, ask the user or explicitly discover a
    target; do not auto-scan.
-2. Expose deferred XcodeBuildMCP tools via `tool_search` with the query matching the resolver's
-   `launch_action`:
-   - physical: `tool_search("XcodeBuildMCP session_set_defaults session_show_defaults build_run_device device iOS")`
-   - simulator: `tool_search("XcodeBuildMCP session_set_defaults session_show_defaults build_run_sim simulator iOS")`
-   Then `session_set_defaults` with the named profile = current session id
-   (`DEV_FLOW_SESSION_ID`, then `CODEX_THREAD_ID`, then `CURSOR_CONVERSATION_ID`), then
-   `session_show_defaults`, then the resolved `build_run_device` or `build_run_sim` with
+2. Confirm the required XcodeBuildMCP tools are actually callable in the current agent turn,
+   matching the resolver's `launch_action`:
+   - physical: `session_set_defaults`, `session_show_defaults`, and `build_run_device`
+   - simulator: `session_set_defaults`, `session_show_defaults`, and `build_run_sim`
+   If any is not callable, return `runtime-blocked`; do not guess tool names, use shell builds, or
+   call any unrelated tool as a substitute. Then `session_set_defaults` with the named profile =
+   current session id (`DEV_FLOW_SESSION_ID`, then `CODEX_THREAD_ID`, then `CURSOR_CONVERSATION_ID`),
+   then `session_show_defaults`, then the resolved `build_run_device` or `build_run_sim` with
    `env: { DEV_FLOW_SESSION_ID: "<current session id>" }`.
 3. DebugBridge `get_debug_page` and UI actions such as `tap_element`.
 4. DebugBridge `inspect_ui` for the current App UIWindow/UIView tree.

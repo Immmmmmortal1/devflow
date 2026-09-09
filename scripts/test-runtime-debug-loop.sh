@@ -25,22 +25,40 @@ if grep -Eq 'get_debug_page|tap_element|read_app_logs|wait_app_logs|inspect_ui' 
   exit 1
 fi
 
-# XcodeBuildMCP 原子链必须包含 session_set_defaults（合法补齐空 profile 的动作）
+# XcodeBuildMCP 原子链必须包含 session_set_defaults → session_show_defaults → build_run_device|build_run_sim
+#（session_set_defaults 是合法补齐空 profile 的动作；不再依赖 tool_search 暴露工具）
 require_text "$TOP_SKILL" 'session_set_defaults' 'XcodeBuildMCP atomic chain missing session_set_defaults'
-if ! /usr/bin/grep -qF 'tool_search("XcodeBuildMCP session_set_defaults session_show_defaults build_run_device device iOS")' "$TOP_SKILL"; then
-  echo "FAIL: XcodeBuildMCP tool_search query must include session_set_defaults" >&2
+require_text "$TOP_SKILL" 'session_show_defaults' 'XcodeBuildMCP atomic chain missing session_show_defaults'
+require_text "$TOP_SKILL" 'build_run_device' 'XcodeBuildMCP atomic chain missing build_run_device'
+require_text "$TOP_SKILL" 'build_run_sim' 'XcodeBuildMCP atomic chain missing build_run_sim'
+require_text "$HEALTH_SKILL" 'session_set_defaults' 'environment-health-check atomic chain missing session_set_defaults'
+require_text "$HEALTH_SKILL" 'session_show_defaults' 'environment-health-check atomic chain missing session_show_defaults'
+require_text "$HEALTH_SKILL" 'build_run_device' 'environment-health-check atomic chain missing build_run_device'
+require_text "$HEALTH_SKILL" 'build_run_sim' 'environment-health-check atomic chain missing build_run_sim'
+
+# 仓库正式流程文件中不得残留 tool_search（强制依赖已移除，改用"确认可调用"语义）
+for flow_file in "$TOP_SKILL" "$HEALTH_SKILL" "$RUNTIME_SKILL" "$ROOT/README.md" \
+  "$ROOT/scripts/app-launch-preflight.sh" "$ROOT/scripts/install-dev-flow.sh" \
+  "$ROOT/scripts/install-xcodebuild-mcp.sh"; do
+  if /usr/bin/grep -qF 'tool_search' "$flow_file"; then
+    echo "FAIL: $flow_file must not retain tool_search dependency" >&2
+    exit 1
+  fi
+done
+
+# app-launch-preflight.sh 必须保留 simulator 分支（build_run_sim + simulator transport），
+# 不能只硬编码 build_run_device+wired
+if ! /usr/bin/grep -qF 'build_run_sim' "$ROOT/scripts/app-launch-preflight.sh"; then
+  echo "FAIL: app-launch-preflight.sh must retain simulator branch (build_run_sim)" >&2
   exit 1
 fi
-if ! /usr/bin/grep -qF 'tool_search("XcodeBuildMCP session_set_defaults session_show_defaults build_run_sim simulator iOS")' "$TOP_SKILL"; then
-  echo "FAIL: XcodeBuildMCP tool_search query must include the simulator build_run_sim variant" >&2
+if ! /usr/bin/grep -qF '"device_transport": "simulator"' "$ROOT/scripts/app-launch-preflight.sh"; then
+  echo "FAIL: app-launch-preflight.sh template must include simulator transport" >&2
   exit 1
 fi
-if ! /usr/bin/grep -qF 'tool_search("XcodeBuildMCP session_set_defaults session_show_defaults build_run_device device iOS")' "$HEALTH_SKILL"; then
-  echo "FAIL: environment-health-check tool_search query must include session_set_defaults" >&2
-  exit 1
-fi
-if ! /usr/bin/grep -qF 'tool_search("XcodeBuildMCP session_set_defaults session_show_defaults build_run_sim simulator iOS")' "$HEALTH_SKILL"; then
-  echo "FAIL: environment-health-check tool_search query must include the simulator build_run_sim variant" >&2
+# 缺失报告的 required_tools 必须提示两种 launch action（不知道目标时）
+if ! /usr/bin/grep -qF 'build_run_device|build_run_sim' "$ROOT/scripts/app-launch-preflight.sh"; then
+  echo "FAIL: app-launch-preflight.sh missing report must list both launch actions" >&2
   exit 1
 fi
 

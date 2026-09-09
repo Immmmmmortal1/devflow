@@ -182,9 +182,9 @@ manifest = {
     "mcp_config_path": mcp_config_path,
     "ai_next_steps": [
         "Ask the user to restart Cursor/Codex/opencode MCP so XcodeBuildMCP reloads with device workflows",
-        "dev-flow session start, then tool_search to expose XcodeBuildMCP tools",
-        "session_set_defaults profile=<session-id> createIfNotExists=true with workspacePath/scheme/configuration/platform/deviceId",
-        "session_show_defaults to verify the profile, then build_run_device on the chosen target (wired device or Simulator) with DEV_FLOW_SESSION_ID",
+        "dev-flow session start, then confirm session_set_defaults / session_show_defaults / build_run_device|build_run_sim are callable",
+        "session_set_defaults profile=<session-id> createIfNotExists=true with workspacePath/scheme/configuration/platform/deviceId (physical) or simulatorId (simulator)",
+        "session_show_defaults to verify the profile, then build_run_device (wired) or build_run_sim (Simulator) on the chosen target with DEV_FLOW_SESSION_ID",
         "dev-flow app-launch record --report <bounded-xcodebuildmcp-json|->, then environment-health run",
     ],
 }

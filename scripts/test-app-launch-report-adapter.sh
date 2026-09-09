@@ -59,8 +59,8 @@ import sys
 from pathlib import Path
 payload = json.loads(Path(sys.argv[1]).read_text())
 assert payload["status"] == "blocked", payload
-assert payload["evidence"] == "app_launch_report_missing;run_xcodebuildmcp_session_set_defaults_then_show_defaults_then_build_run_device", payload
-assert payload["required_tools"] == ["session_set_defaults", "session_show_defaults", "build_run_device"], payload
+assert payload["evidence"] == "app_launch_report_missing;run_xcodebuildmcp_session_set_defaults_then_show_defaults_then_build_run_device_or_build_run_sim", payload
+assert payload["required_tools"] == ["session_set_defaults", "session_show_defaults", "build_run_device|build_run_sim"], payload
 PY
 
 DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=adapter-session \
@@ -72,7 +72,57 @@ from pathlib import Path
 payload = json.loads(Path(sys.argv[1]).read_text())
 assert payload["session_id"] == "adapter-session", payload
 assert payload["producer"] == "XcodeBuildMCP", payload
+# 默认模板 = physical 分支（build_run_device + wired）
+assert payload["build_run_action"] == "build_run_device", payload
+assert payload["device_transport"] == "wired", payload
 PY
+
+# --target simulator 模板 = simulator 分支（build_run_sim + simulator）
+DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=adapter-session \
+  /bin/bash "$ROOT/scripts/dev-flow.sh" app-launch template --target simulator >"$TMP_ROOT/template-sim.json"
+/usr/bin/python3 - "$TMP_ROOT/template-sim.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+payload = json.loads(Path(sys.argv[1]).read_text())
+assert payload["session_id"] == "adapter-session", payload
+assert payload["producer"] == "XcodeBuildMCP", payload
+assert payload["build_run_action"] == "build_run_sim", payload
+assert payload["device_transport"] == "simulator", payload
+PY
+
+# --target physical 模板 = physical 分支（显式 physical，与默认一致）
+DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=adapter-session \
+  /bin/bash "$ROOT/scripts/dev-flow.sh" app-launch template --target physical >"$TMP_ROOT/template-phys.json"
+/usr/bin/python3 - "$TMP_ROOT/template-phys.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+payload = json.loads(Path(sys.argv[1]).read_text())
+assert payload["build_run_action"] == "build_run_device", payload
+assert payload["device_transport"] == "wired", payload
+PY
+
+# --target 非法值必须 fail closed（exit 2），不得静默降级为 physical
+if DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=adapter-session \
+  /bin/bash "$ROOT/scripts/dev-flow.sh" app-launch template --target foo >/dev/null 2>&1; then
+  echo "FAIL: app-launch template --target foo must exit 2 (invalid value)" >&2
+  exit 1
+fi
+
+# --target 缺参数必须 fail closed（exit 2）
+if DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=adapter-session \
+  /bin/bash "$ROOT/scripts/dev-flow.sh" app-launch template --target >/dev/null 2>&1; then
+  echo "FAIL: app-launch template --target without value must exit 2" >&2
+  exit 1
+fi
+
+# --target 显式空值必须 fail closed（exit 2），不得降级为默认 physical
+if DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=adapter-session \
+  /bin/bash "$ROOT/scripts/dev-flow.sh" app-launch template --target "" >/dev/null 2>&1; then
+  echo "FAIL: app-launch template --target '' must exit 2 (explicit empty rejected)" >&2
+  exit 1
+fi
 
 if run_health_for adapter-session >/dev/null 2>&1; then
   echo "FAIL: health check passed without a recorded app launch report" >&2
@@ -86,7 +136,7 @@ from pathlib import Path
 
 state = json.loads(Path(sys.argv[1]).read_text())
 evidence = state["environment_health"]["checks"]["app_launch"]["evidence"]
-assert evidence == "app_launch_report_missing;run_xcodebuildmcp_session_set_defaults_then_show_defaults_then_build_run_device", evidence
+assert evidence == "app_launch_report_missing;run_xcodebuildmcp_session_set_defaults_then_show_defaults_then_build_run_device_or_build_run_sim", evidence
 assert evidence != "app_launch_probe_not_configured"
 # 新模型：review_mcp 独立探针，app_launch blocked 不影响 review_mcp
 assert state["environment_health"]["checks"]["review_mcp"]["status"] == "available", state
