@@ -18,17 +18,9 @@ SESSION_ID="$(resolve_dev_flow_session_id)" || exit $?
 STATE_FILE="$STATE_DIR/$SESSION_ID.json"
 # shellcheck source=lib/dev-flow-rules.sh
 source "$(cd "$(dirname "$SCRIPT_PATH")" && pwd)/lib/dev-flow-rules.sh"
+# shellcheck source=lib/route-whitelist.sh
+source "$(cd "$(dirname "$SCRIPT_PATH")" && pwd)/lib/route-whitelist.sh"
 dev_flow_rules_init
-
-# 异常退出时统一清理临时文件（UNTRACKED_Z / PACKET_TMP 在成功路径上已被 rm/mv，此处兜底）
-UNTRACKED_Z=""
-PACKET_TMP=""
-cleanup_tmp() {
-  [[ -n "$UNTRACKED_Z" ]] && /bin/rm -f "$UNTRACKED_Z" 2>/dev/null
-  [[ -n "$PACKET_TMP" ]] && /bin/rm -f "$PACKET_TMP" 2>/dev/null
-  return 0
-}
-trap cleanup_tmp EXIT
 
 ROUTE="code-quality-review"
 while [[ $# -gt 0 ]]; do
@@ -48,19 +40,12 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# route 白名单：仅小写字母/数字/连字符，防路径穿越（../）与任意文件注入
-case "$ROUTE" in
-  ""|*[!a-z0-9-]*)
-    echo "Invalid route name: $ROUTE (allowed: [a-z0-9-]+)" >&2
-    exit 2
-    ;;
-esac
-ROUTES_DIR="$SOURCE_ROOT/skills/code-review-workflow/routes"
-ROUTE_FILE="$ROUTES_DIR/$ROUTE.md"
-if [[ ! -f "$ROUTE_FILE" ]]; then
-  echo "Unknown review route: $ROUTE (no routes/$ROUTE.md in code-review-workflow)" >&2
+# route 白名单校验（从实际 routes 目录扫描）
+if ! validate_route_name "$ROUTE" "$SOURCE_ROOT"; then
   exit 2
 fi
+ROUTES_DIR="$SOURCE_ROOT/skills/code-review-workflow/routes"
+ROUTE_FILE="$ROUTES_DIR/$ROUTE.md"
 
 # 1. 会话校验：active + 环境门 review_mcp 证据按 ; 分段精确匹配 fallback=gstack-review
 /usr/bin/python3 - "$STATE_FILE" <<'PY'
@@ -98,35 +83,40 @@ PY
 # 1.5 双层规则机制：runner 会写 state（签发 token），与门禁 action 同样强制项目规则 fresh
 dev_flow_rules_verify_project_fresh "$STATE_FILE"
 
-# 2. 解析 gstack review SKILL.md（候选路径与 review-health-probe.sh 一致）
-skills_root=""
-if [[ -n "${CURSOR_SKILLS_ROOT:-}" ]]; then
-  skills_root="$CURSOR_SKILLS_ROOT"
-elif [[ "${CURSOR_AGENT:-}" == "1" || -n "${CURSOR_CONVERSATION_ID:-}" ]]; then
-  skills_root="$HOME/.cursor/skills"
-elif [[ -n "${CODEX_SKILLS_ROOT:-}" ]]; then
-  skills_root="$CODEX_SKILLS_ROOT"
-elif [[ -n "${CODEX_HOME:-}" ]]; then
-  skills_root="$CODEX_HOME/skills"
-else
-  skills_root="$HOME/.codex/skills"
-fi
+# 2. 解析 gstack review SKILL.md 路径
+# 绑定到 state.review_selection.skill_path（与 review-health-probe.sh 探活时一致）。
+# runner 不得自行找出不同路径——path 从 environment selection 绑定到 state，
+# 路径不存在/变化 fail closed。
+# shellcheck source=lib/reviewer-readiness.sh
+source "$(dev_flow_script_path lib/reviewer-readiness.sh)"
 
+GSTACK_SKILL_DIR=""
 GSTACK_SKILL=""
-for candidate in \
-  "${GSTACK_REVIEW_SKILL_ROOT:-}" \
-  "$skills_root/gstack/review" \
-  "$HOME/.claude/skills/gstack/review" \
-  "$HOME/.codex/skills/gstack/review" \
-  "$HOME/.cursor/skills/gstack/review"; do
-  if [[ -n "$candidate" && -f "$candidate/SKILL.md" ]]; then
-    GSTACK_SKILL="$candidate/SKILL.md"
-    break
-  fi
-done
-if [[ -z "$GSTACK_SKILL" ]]; then
-  echo "gstack-review skill not found in any candidate path; install gstack or set GSTACK_REVIEW_SKILL_ROOT" >&2
-  exit 1
+# 优先从 state.review_selection.skill_path 读取（绑定路径）
+BOUND_SKILL_PATH="$(/usr/bin/python3 -c '
+import json, sys
+from pathlib import Path
+state = json.loads(Path(sys.argv[1]).read_text())
+selection = state.get("review_selection") or {}
+print(selection.get("skill_path") or "")
+' "$STATE_FILE" 2>/dev/null || true)"
+
+if [[ -n "$BOUND_SKILL_PATH" ]]; then
+    # 绑定路径存在性校验
+    if [[ ! -f "$BOUND_SKILL_PATH" ]]; then
+        echo "FAIL: bound gstack skill_path does not exist: $BOUND_SKILL_PATH" >&2
+        echo "The skill path was bound at environment-health-check time but is now missing." >&2
+        echo "Re-run environment-health-check.sh to rebind, or check skill installation." >&2
+        exit 1
+    fi
+    GSTACK_SKILL="$BOUND_SKILL_PATH"
+    GSTACK_SKILL_DIR="$(dirname "$GSTACK_SKILL")"
+elif ! GSTACK_SKILL_DIR="$(resolve_gstack_skill_path 2>/dev/null)"; then
+    echo "gstack-review skill not found: no skill_path in review_selection and no candidate path found" >&2
+    echo "Run environment-health-check.sh to bind skill_path, or set GSTACK_REVIEW_SKILL_ROOT" >&2
+    exit 1
+else
+    GSTACK_SKILL="$GSTACK_SKILL_DIR/SKILL.md"
 fi
 
 # 3. git 与 base 校验
@@ -164,119 +154,233 @@ if ! /usr/bin/git -C "$ROOT" rev-parse --verify --quiet "$BASE^{commit}" >/dev/n
 fi
 MERGE_BASE="$(/usr/bin/git -C "$ROOT" merge-base "$BASE" HEAD)"
 
-# 4. 机械准备审查包：merge-base → 工作区（含 staged/unstaged）+ untracked 文件。
-# 先流式计行，超限不装载完整 diff（避免大 diff 进内存）。
-MAX_DIFF_LINES=4000
-MAX_UNTRACKED_LINES=2000
-DIFF_STAT="$(/usr/bin/git -C "$ROOT" diff --stat "$MERGE_BASE")"
-DIFF_NAMES="$(/usr/bin/git -C "$ROOT" diff --name-status "$MERGE_BASE")"
-# untracked 列表排除 .dev-flow/：dev-flow 自身 state 文件不属于审查对象，
-# 且未 gitignore .dev-flow 的项目里 state 文件会挤占 untracked 内容预算。
-# 用 -z 输出避免换行文件名被拆分（先存临时清单，read -d '' 精确逐条读取）。
-UNTRACKED_Z="$(/usr/bin/mktemp)"
-/usr/bin/git -C "$ROOT" ls-files --others --exclude-standard -z -- . ':(exclude).dev-flow' > "$UNTRACKED_Z"
-DIFF_LINES="$(/usr/bin/git -C "$ROOT" diff "$MERGE_BASE" | /usr/bin/wc -l | /usr/bin/tr -d '[:space:]')"
+# 4. 安全前置检查：在任何对 STATE_DIR 创建/写临时文件前，
+# 验证 trusted_root=$ROOT/.dev-flow 到 STATE_DIR 原始链无 symlink 且 boundary 内。
+# sessions symlink 会越界——必须在开始构建前 fail closed，避免浪费/泄露。
+PROJECT_ROOT="${DEV_FLOW_PROJECT_ROOT:-$ROOT}"
+DEV_FLOW_SOURCE_ROOT="$SOURCE_ROOT" /usr/bin/python3 - "$PROJECT_ROOT/.dev-flow" "$STATE_DIR" <<'PYCHECK'
+import os, sys
+from pathlib import Path
+sys.path.insert(0, os.path.join(os.environ["DEV_FLOW_SOURCE_ROOT"], "scripts", "lib"))
+from atomic_json_write import _validate_trusted_root, _check_original_path, _check_resolved_boundary
+trusted_root = Path(os.path.normpath(sys.argv[1]))
+state_dir = Path(os.path.normpath(sys.argv[2]))
+_validate_trusted_root(trusted_root)
+_check_original_path(trusted_root, state_dir)
+_check_resolved_boundary(trusted_root, state_dir)
+PYCHECK
 
+# 5. 机械准备审查包：merge-base → 工作区（含 staged/unstaged）+ untracked 文件。
+# 不在 STATE_DIR 创建构建临时文件——packet 内容在 Python 内存中构建，
+# 最终仅通过 safe_atomic_write_bytes 写入 trusted root。
+# untracked 列表也在 Python 中处理（不落盘 STATE_DIR）。
 PACKET_FILE="$STATE_DIR/.${SESSION_ID}.review-packet.txt"
 REPORT_PATH="$STATE_DIR/.${SESSION_ID}.review-report.json"
-# packet 写入：mktemp 安全创建（O_EXCL/0600）构建内容后 mv -f 原子替换——
-# rename 只替换目录项，即使 PACKET_FILE 被预先做成 symlink 也不会写到 symlink 目标，
-# 结构性消除 check-then-write 的 TOCTOU 窗口
-PACKET_TMP="$(/usr/bin/mktemp "$STATE_DIR/.packet-XXXXXX")"
-{
-  echo "=== git diff --stat (merge-base -> worktree) ==="
-  printf '%s\n\n' "$DIFF_STAT"
-  echo "=== git diff --name-status ==="
-  printf '%s\n\n' "$DIFF_NAMES"
-  if [[ "$DIFF_LINES" -le "$MAX_DIFF_LINES" ]]; then
-    echo "=== git diff (full, $DIFF_LINES lines; merge-base -> worktree incl. staged+unstaged) ==="
-    /usr/bin/git -C "$ROOT" diff "$MERGE_BASE"
-  else
-    echo "=== git diff TOO LARGE ($DIFF_LINES lines > $MAX_DIFF_LINES) ==="
-    echo "完整 diff 超过上限未装载。按上面 name-status 清单分文件自行 git diff 审查，"
-    echo "或设置 DEV_FLOW_REVIEW_BASE 缩小范围后重跑本脚本。"
-  fi
-  echo ""
-  echo "=== untracked files ==="
-  if [[ ! -s "$UNTRACKED_Z" ]]; then
-    echo "(none)"
-  else
-    untracked_budget="$MAX_UNTRACKED_LINES"
-    # read -d '' 按 NUL 精确读文件名（含换行/空格的名字安全）；重定向输入不占子 shell，预算正确递减
-    while IFS= read -r -d '' uf && [[ "$untracked_budget" -gt 0 ]]; do
-      [[ -z "$uf" ]] && continue
-      echo "--- untracked: $uf ---"
-      /usr/bin/head -n 500 "$ROOT/$uf" 2>/dev/null || echo "(unreadable/binary)"
-      echo ""
-      untracked_budget=$((untracked_budget - 500))
-    done < "$UNTRACKED_Z"
-  fi
-} > "$PACKET_TMP"
-/bin/rm -f "$UNTRACKED_Z"
-/bin/mv -f "$PACKET_TMP" "$PACKET_FILE"
-/bin/chmod 600 "$PACKET_FILE"
 
-PACKET_DIGEST="$(/usr/bin/shasum -a 256 "$PACKET_FILE" | /usr/bin/cut -d' ' -f1)"
+PACKET_DIGEST="$(DEV_FLOW_SOURCE_ROOT="$SOURCE_ROOT" /usr/bin/python3 - "$ROOT" "$MERGE_BASE" "$SESSION_ID" "$STATE_DIR" "$PROJECT_ROOT/.dev-flow" <<'PKT'
+import hashlib
+import os
+import subprocess
+import sys
+from pathlib import Path
 
-# 5. 签发一次性 token 并记入 state（record-gate 将强制校验 token/digest/报告路径）
-read -r FALLBACK_TOKEN ISSUED_AT <<< "$(/usr/bin/python3 - "$STATE_FILE" "$SESSION_ID" "$PACKET_DIGEST" "$REPORT_PATH" "$ROUTE" "$PACKET_FILE" "$GSTACK_SKILL" "$ROUTE_FILE" <<'PY'
+sys.path.insert(0, os.path.join(os.environ["DEV_FLOW_SOURCE_ROOT"], "scripts", "lib"))
+from atomic_json_write import safe_atomic_write_bytes
+
+root, merge_base, session_id, state_dir, trusted_root = sys.argv[1:6]
+
+MAX_DIFF_LINES = 4000
+MAX_UNTRACKED_LINES = 2000
+packet_file = os.path.join(state_dir, f".{session_id}.review-packet.txt")
+
+# git diff stat
+diff_stat = subprocess.run(
+    ["git", "-C", root, "diff", "--stat", merge_base],
+    capture_output=True, text=True,
+).stdout
+
+# git diff name-status
+diff_names = subprocess.run(
+    ["git", "-C", root, "diff", "--name-status", merge_base],
+    capture_output=True, text=True,
+).stdout
+
+# git diff full
+diff_full = subprocess.run(
+    ["git", "-C", root, "diff", merge_base],
+    capture_output=True, text=True,
+).stdout
+diff_lines = diff_full.count("\n")
+
+# untracked files (NUL-separated, binary-safe)
+untracked_raw = subprocess.run(
+    ["git", "-C", root, "ls-files", "--others", "--exclude-standard", "-z",
+     "--", ":(exclude).dev-flow"],
+    capture_output=True,
+).stdout
+untracked_paths = [p for p in untracked_raw.split(b"\0") if p]
+
+# build packet content in memory
+parts = []
+parts.append("=== git diff --stat (merge-base -> worktree) ===\n")
+parts.append(diff_stat + "\n\n")
+parts.append("=== git diff --name-status ===\n")
+parts.append(diff_names + "\n\n")
+if diff_lines <= MAX_DIFF_LINES:
+    parts.append(f"=== git diff (full, {diff_lines} lines; merge-base -> worktree incl. staged+unstaged) ===\n")
+    parts.append(diff_full)
+else:
+    parts.append(f"=== git diff TOO LARGE ({diff_lines} lines > {MAX_DIFF_LINES}) ===\n")
+    parts.append("完整 diff 超过上限未装载。按上面 name-status 清单分文件自行 git diff 审查，\n")
+    parts.append("或设置 DEV_FLOW_REVIEW_BASE 缩小范围后重跑本脚本。\n")
+parts.append("\n")
+parts.append("=== untracked files ===\n")
+if not untracked_paths:
+    parts.append("(none)\n")
+else:
+    untracked_budget = MAX_UNTRACKED_LINES
+    for raw_path in sorted(untracked_paths):
+        if untracked_budget <= 0:
+            break
+        uf = raw_path.decode("utf-8", "surrogateescape")
+        parts.append(f"--- untracked: {uf} ---\n")
+        abs_path = os.path.join(root, uf)
+        try:
+            with open(abs_path, "r", errors="replace") as f:
+                lines = []
+                for i, line in enumerate(f):
+                    if i >= 500:
+                        break
+                    lines.append(line)
+                if lines:
+                    parts.append("".join(lines))
+                    if not lines[-1].endswith("\n"):
+                        parts.append("\n")
+        except (OSError, IOError):
+            parts.append("(unreadable/binary)\n")
+        parts.append("\n")
+        untracked_budget -= 500
+
+content = "".join(parts).encode("utf-8", "surrogateescape")
+
+# write via safe_atomic_write_bytes (trusted-boundary check)
+safe_atomic_write_bytes(trusted_root, packet_file, content)
+
+# compute packet digest
+packet_digest = hashlib.sha256(content).hexdigest()
+print(packet_digest)
+PKT
+)"
+
+# 7. 计算统一 worktree digest（与 issue-review-ticket.sh 共享同一实现）
+WT_INFO="$(/usr/bin/python3 "$SOURCE_ROOT/scripts/lib/worktree_digest.py" "$PROJECT_ROOT")"
+
+# 8. 签发统一 review dispatch ticket + 一次性 fallback token 并记入 state
+# 统一 ticket 由 issue-review-ticket.sh 签发（agent/mcp/fallback 共用）；
+# fallback 额外签发 packet 绑定（packet_digest/report_path/gstack_skill/route_contract）。
+# 两套 token 机制并存：ticket_token 是统一机械防伪，fallback_token 是 fallback 专属绑定。
+# 拒绝覆盖未消费/未作废的 ticket——先运行 cancel-review-ticket.sh。
+read -r FALLBACK_TOKEN ISSUED_AT SELECTION_DIGEST TICKET_TOKEN TICKET_DIGEST <<< "$(/usr/bin/python3 - "$STATE_FILE" "$SESSION_ID" "$PACKET_DIGEST" "$REPORT_PATH" "$ROUTE" "$PACKET_FILE" "$GSTACK_SKILL" "$ROUTE_FILE" "$WT_INFO" "$PROJECT_ROOT/.dev-flow" "$SOURCE_ROOT" <<'PY'
+import hashlib
 import json
 import os
 import secrets
+import subprocess
 import sys
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-def atomic_write(path, data):
-    """原子写 session state：临时文件 + os.replace，权限 0600；拒绝 symlink 目标"""
-    if path.is_symlink():
-        raise SystemExit("refusing to write session state through a symlink")
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".state-", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-            f.write("\n")
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, str(path))
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
-
 state_path = Path(sys.argv[1])
 session_id, packet_digest, report_path, route, packet_path, gstack_skill, route_file = sys.argv[2:9]
+wt_info = json.loads(sys.argv[9])
+trusted_root = sys.argv[10]
+source_root = sys.argv[11]
+sys.path.insert(0, os.path.join(source_root, 'scripts', 'lib'))
+from atomic_json_write import safe_atomic_write_json
 
 def sha256_file(p):
-    import hashlib
     return hashlib.sha256(Path(p).read_bytes()).hexdigest()
+
+def sha256_str(s):
+    return "sha256:" + hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 state = json.loads(state_path.read_text())
 issued_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-token = secrets.token_hex(16)
+
+# ── 拒绝覆盖未消费/未作废的 ticket ──
+existing_ticket = state.get("review_ticket")
+if existing_ticket:
+    if not existing_ticket.get("consumed") and not existing_ticket.get("cancelled"):
+        raise SystemExit(
+            "an unconsumed review ticket already exists in this session. "
+            "Run scripts/cancel-review-ticket.sh to cancel it before issuing a new one."
+        )
+
+# ── 统一 ticket ──
+selection = state.get("review_selection") or {}
+if not selection.get("selected_adapter"):
+    raise SystemExit("review_selection missing; run environment-health-check.sh first.")
+selected_adapter = selection["selected_adapter"]
+config_digest = selection.get("config_digest", "")
+
+ticket_token = secrets.token_hex(16)
+ticket_path = state_path.parent / f".{session_id}.review-ticket.json"
+ticket = {
+    "session_id": session_id,
+    "ticket_token": ticket_token,
+    "selected_adapter": selected_adapter,
+    "config_digest": config_digest,
+    "route": route,
+    "base_ref": wt_info["base_ref"],
+    "merge_base": wt_info["merge_base"],
+    "worktree_digest": wt_info["worktree_digest"],
+    "tracked_digest": wt_info["tracked_digest"],
+    "untracked_digest": wt_info["untracked_digest"],
+    "issued_at": issued_at,
+    "consumed": False,
+}
+ticket_json = json.dumps(ticket, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+ticket_digest = sha256_str(ticket_json)
+ticket["ticket_digest"] = ticket_digest
+safe_atomic_write_json(trusted_root, ticket_path, ticket)
+
+# ── fallback 专属绑定 ──
+fallback_token = secrets.token_hex(16)
 state["review_fallback"] = {
-    "token": token,
+    "token": fallback_token,
     "packet_digest": packet_digest,
     "packet_path": packet_path,
     "report_path": report_path,
     "route": route,
-    # 注入文档绑定：gstack SKILL.md 与 route 契约签发时 digest，
-    # record-gate 重算比对，签发后被修改则拒收（审查规范一致性）
     "gstack_skill_path": gstack_skill,
     "gstack_skill_digest": sha256_file(gstack_skill),
     "route_path": route_file,
     "route_digest": sha256_file(route_file),
     "issued_at": issued_at,
 }
+# ── 统一 ticket 写入 state ──
+state["review_ticket"] = {
+    "token": ticket_token,
+    "ticket_digest": ticket_digest,
+    "ticket_path": str(ticket_path),
+    "selected_adapter": selected_adapter,
+    "config_digest": config_digest,
+    "route": route,
+    "base_ref": wt_info["base_ref"],
+    "merge_base": wt_info["merge_base"],
+    "worktree_digest": wt_info["worktree_digest"],
+    "tracked_digest": wt_info["tracked_digest"],
+    "untracked_digest": wt_info["untracked_digest"],
+    "issued_at": issued_at,
+    "consumed": False,
+}
 state["session_id"] = session_id
-atomic_write(state_path, state)
-print(token, issued_at)
+safe_atomic_write_json(trusted_root, state_path, state)
+print(fallback_token, issued_at, config_digest, ticket_token, ticket_digest)
 PY
 )"
 
-# 6. 注入：指令横幅（含 token/digest/报告路径）+ gstack SKILL.md + route 契约 + 审查包 + 报告模板
+# 9. 注入：指令横幅（含 token/digest/报告路径）+ gstack SKILL.md + route 契约 + 审查包 + 报告模板
 cat <<EOF
 ========================================================================
 REVIEW FALLBACK MODE (review_mcp unavailable -> gstack-review)
@@ -289,24 +393,32 @@ REVIEW FALLBACK MODE (review_mcp unavailable -> gstack-review)
    范围 = merge-base(${MERGE_BASE}) → 工作区（含 staged/unstaged）+ untracked 文件。
 4. 审查结论写入指定报告路径（必须原路径，record-gate 会校验）：
    $REPORT_PATH
-   必需字段（缺一拒收）：
-   {
-     "producer": "code-review-workflow",
-     "schema_version": 1,
-     "session_id": "${SESSION_ID}",
-     "gate": "review",
-     "route": "${ROUTE}",
-     "review_path": "fallback",
-     "fallback_token": "${FALLBACK_TOKEN}",
-     "packet_digest": "${PACKET_DIGEST}",
-     "status": "pass | revise | blocked",
-     "reviewer_result": "<与 status 相同>",
-     "evidence": "<bounded 审查摘要，含发现/严重度/位置>"
-   }
+    必需字段（缺一拒收）：
+    {
+      "producer": "code-review-workflow",
+      "schema_version": 1,
+      "session_id": "${SESSION_ID}",
+      "gate": "review",
+      "route": "${ROUTE}",
+      "review_path": "fallback",
+      "fallback_token": "${FALLBACK_TOKEN}",
+      "packet_digest": "${PACKET_DIGEST}",
+      "ticket_token": "${TICKET_TOKEN}",
+      "ticket_digest": "${TICKET_DIGEST}",
+      "selected_adapter": "skill/gstack",
+      "config_digest": "${SELECTION_DIGEST}",
+      "status": "pass | revise | blocked",
+      "reviewer_result": "<与 status 相同>",
+      "evidence": "<bounded 审查摘要，含发现/严重度/位置>"
+    }
 5. 写完后收口：bash scripts/dev-flow-session.sh record-gate --name review --report ${REPORT_PATH}
 6. status=pass 仅当 route 的全部 pass conditions 满足；未审查/timeout 不得报 pass。
 7. 代码每次变更后必须重跑本脚本（packet_digest 会变，旧报告作废）。
-8. fallback_token 一次性：record-gate 接受 pass 后即销毁。
+8. fallback_token 一次性：record-gate 接受 pass 后即销毁。ticket_token 同理（统一机械防伪）。
+9. 报告必须携带 selected_adapter=skill/gstack 和 config_digest（从会话 review_selection 获取）；
+    record-gate 会校验 selection binding（no-result-washing：dispatch 后不得切换 adapter）。
+10. 报告必须携带 ticket_token 和 ticket_digest（统一 review dispatch ticket）；
+    record-gate 会校验 ticket 归属、adapter/config/route/diff digest、未消费状态。
 
 ========================================================================
 GSTACK REVIEW SKILL（全文注入， source: ${GSTACK_SKILL}）

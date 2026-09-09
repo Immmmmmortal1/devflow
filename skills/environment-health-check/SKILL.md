@@ -1,6 +1,6 @@
 ---
 name: environment-health-check
-description: Use when a selected development workflow needs an explicit availability report for DebugBridge, Review MCP, and the Figma REST API skill before continuing execution.
+description: Use when a selected development workflow needs an explicit availability report for DebugBridge, 审查角色（@openai-reviewer）, and the Figma REST API skill before continuing execution.
 ---
 
 # Environment Health Check
@@ -8,41 +8,80 @@ description: Use when a selected development workflow needs an explicit availabi
 ## Overview
 
 Provide an evidence-backed availability report for the development capabilities that support UI
-implementation, UI review, and runtime verification. The DebugBridge check has a mandatory App
-launch preflight on the chosen target (physical device or Simulator): an App that is not running
-cannot prove that its in-App DebugBridge is usable. When invoked by `dev-flow`, this gate runs
-after `confirm-plan` and before implementation; when invoked independently, it only reports health
-and does not select or change a route.
+implementation, UI review, and runtime verification. The required capabilities are derived from
+the session's `required_gates` — only required capabilities are probed; non-required capabilities
+are recorded as `not-required` and do not participate in the overall status. The DebugBridge check
+has a mandatory App launch preflight on the chosen target (physical device or Simulator): an App
+that is not running cannot prove that its in-App DebugBridge is usable. When invoked by
+`dev-flow`, this gate runs after `confirm-plan` and before implementation; when invoked
+independently, it only reports health and does not select or change a route.
+
+## Capability model
+
+The required capabilities are derived from the session's `required_gates`:
+
+| gate | required capabilities |
+|---|---|
+| `review` | `review_mcp` |
+| `runtime` | `app_launch`, `debugbridge` |
+| `figma_ui` | `app_launch`, `debugbridge`, `figma_rest_api` |
+| `ui_parity` | `app_launch`, `debugbridge`, `figma_rest_api` |
+
+`review` is always required (every session needs code review). Pure dev-flow / script /
+documentation tasks that do not touch App, Figma, or DebugBridge require only `review` and do
+**not** need App launch, DebugBridge, or `figma-rest-api`. Review and Figma probes are
+independent; the App launch probe is independent; DebugBridge depends on App launch (when both
+are required, an App launch failure marks DebugBridge as `not-run` instead of probing). An App
+launch failure never short-circuits the review or Figma probes.
 
 ## Checks
 
-Run the App launch preflight and all three capability checks, then report all four results. Do not
-infer availability from a
-configured name, an old process, a previous task, or the existence of a skill file. Review MCP and
-Figma checks remain read-only; the DebugBridge check may launch the current App as its required
-App launch preflight on the chosen target.
+Run only the probes for required capabilities, then report all four check rows (required ones
+probed, non-required marked `not-required`). Do not infer availability from a configured name, an
+old process, a previous task, or the existence of a skill file. 审查角色
+（@openai-reviewer）and Figma checks remain read-only; the DebugBridge check may launch the
+current App as its required App launch preflight on the chosen target.
 
 ### 0. App launch preflight for DebugBridge
 
 Before calling any DebugBridge health tool, launch the current App on the chosen target (physical
-device or Simulator) through the registered XcodeBuildMCP tools in this exact order:
+device or Simulator) through the registered XcodeBuildMCP tools. The App launch preflight is
+required only when `app_launch` is a required capability (i.e., the session includes `runtime`,
+`figma_ui`, or `ui_parity`).
 
-1. Expose the deferred tools with
-   `tool_search("XcodeBuildMCP session_set_defaults session_show_defaults build_run_device device iOS")`.
+First, resolve the Xcode target from `<app-root>/.xcodebuildmcp/config.yaml`:
+
+```bash
+bash /path/to/devflow/scripts/dev-flow.sh xcode-target
+```
+
+The resolver outputs bounded JSON with `target_kind` (`physical` or `simulator`) and
+`launch_action` (`build_run_device` or `build_run_sim`). Use the resolver's `profile` fields to
+seed `session_set_defaults`. If the resolver is `blocked`, ask the user or explicitly discover a
+target; do not auto-scan.
+
+Then expose the deferred tools with the tool_search query matching the resolver's `launch_action`:
+
+1. Physical target (`target_kind=physical`, `launch_action=build_run_device`):
+   `tool_search("XcodeBuildMCP session_set_defaults session_show_defaults build_run_device device iOS")`
    Continue only if the actual callable tools include `session_set_defaults`,
    `session_show_defaults`, and `build_run_device`; do not guess tool names or use shell builds.
-2. Isolate XcodeBuildMCP defaults with `session_set_defaults` `profile` = current session id
-   (`DEV_FLOW_SESSION_ID`, then `CODEX_THREAD_ID`, then `CURSOR_CONVERSATION_ID`; never `local`
-   inside Cursor) and `createIfNotExists: true` for this worktree, setting `workspacePath`
-   (`.xcworkspace` for CocoaPods), `scheme`, `configuration`, `platform`, and the explicit
-   `deviceId` of the chosen target (physical UDID or Simulator id). Then call
-   `session_show_defaults` and confirm those fields read back correctly. The target is fixed once
-   chosen; do not assume defaults or silently switch to the other target kind after a failure.
-3. Call `build_run_device` to build, install, and launch the current App. Pass the current
-   session id to the launched App via `env: { DEV_FLOW_SESSION_ID: "<current session id>" }`.
-   The App reads this at launch for DebugBridge `/identity`; without it, identity reports
-   `sessionID: local` and the DebugBridge gate blocks.
-4. Record the bounded launch result for the current session:
+2. Simulator target (`target_kind=simulator`, `launch_action=build_run_sim`):
+   `tool_search("XcodeBuildMCP session_set_defaults session_show_defaults build_run_sim simulator iOS")`
+   Continue only if the actual callable tools include `session_set_defaults`,
+   `session_show_defaults`, and `build_run_sim`; do not guess tool names or use shell builds.
+
+Then: `session_set_defaults` `profile` = current session id (`DEV_FLOW_SESSION_ID`, then
+`CODEX_THREAD_ID`, then `CURSOR_CONVERSATION_ID`; never `local` inside Cursor) and
+`createIfNotExists: true` for this worktree, setting the resolver's `profile` fields
+(`workspacePath`/`projectPath`, `scheme`, `configuration`, `platform`, `deviceId`/`simulatorId`).
+Then call `session_show_defaults` and confirm those fields read back correctly. The target is
+fixed once chosen; do not assume defaults or silently switch to the other target kind after a
+failure.
+
+Call the launch action (`build_run_device` for physical, `build_run_sim` for Simulator) to build,
+install, and launch the current App. Pass `env: { DEV_FLOW_SESSION_ID: "<current session id>" }`
+in the App launch environment. Record the bounded launch result for the current session:
 
 ```bash
 cd <app-root>
@@ -51,10 +90,10 @@ bash /path/to/devflow/scripts/dev-flow.sh app-launch status
 ```
 
 Use `app-launch instructions` when the current session has no App launch report. `--report <path|->`
-is required and must import an already bounded XcodeBuildMCP JSON payload; the gate must never
-invent a successful launch report.
-5. Only after a successful build, install, launch, and record step may the DebugBridge check call
-   `ensure_ports`, then `ping`.
+is required and must import an already bounded XcodeBuildMCP JSON payload (schema_version=2 with
+`build_run_action` cross-matched to `device_transport`); the gate must never invent a successful
+launch report. Only after a successful build, install, launch, and record step may the
+DebugBridge check call `ensure_ports`, then `ping`.
 
 Gate scripts run from the central devflow clone; the app repo only stores `.dev-flow/` session state.
 The default App launch probe reads `.dev-flow/sessions/<session-id>.app-launch.json`. Exit code
@@ -67,16 +106,18 @@ bash /path/to/devflow/scripts/dev-flow.sh environment-health run
 ```
 
 The script records the report in the current `.dev-flow/sessions/<session-id>.json` and exits
-non-zero when any check is `blocked` or `not-run`. Use `DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD` when the
-registered service requires a local probe adapter. The App launch probe defaults to
-`scripts/app-launch-preflight.sh status` after `scripts/app-launch-preflight.sh record --report`.
-Review MCP health defaults to `scripts/review-health-probe.sh`, which falls back to `gstack-review` when
-orchestrator MCP is unavailable. Override with `DEV_FLOW_REVIEW_MCP_HEALTH_CMD` only for tests or
-custom adapters. The script can use a sibling `orchestrator-mcp/scripts/orchestrator-doctor.sh`
-through that probe; do not replace a failed probe with a hand-written `available` result.
-`dev-flow-session.sh` requires `confirm-plan` before this gate can record evidence; after
-confirmation, `record-gate`, `approve-commit`, `commit`, and `testflight` reject sessions whose
-recorded status is not `available` (and `checked_at` must be on or after `confirmed_at`).
+non-zero when any required capability is `blocked` or `not-run`. Use
+`DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD` when the registered service requires a local probe adapter. The
+App launch probe defaults to `scripts/app-launch-preflight.sh status` after
+`scripts/app-launch-preflight.sh record --report`. 审查角色 health defaults to
+`scripts/review-health-probe.sh`, which uses the review-backend resolver to select an adapter
+(agent/openai-reviewer, mcp/orchestrator, or skill/gstack) and falls back to `gstack-review` when
+the primary is unavailable and the policy allows. Override with
+`DEV_FLOW_REVIEW_MCP_HEALTH_CMD` only for tests or custom adapters. Do not replace a failed probe
+with a hand-written `available` result. `dev-flow-session.sh` requires `confirm-plan` before this
+gate can record evidence; after confirmation, `record-gate`, `approve-commit`, `commit`, and
+`testflight` reject sessions whose recorded status is not `available` (and `checked_at` must be
+on or after `confirmed_at`).
 
 ### 1. DebugBridge
 
@@ -90,28 +131,38 @@ reachable, or App session id does not match dev-flow, return `blocked` with the 
 capability and phase. Do not substitute Simulator, Xcode GUI automation, system log streams, or
 a screenshot.
 
-### 2. Review MCP
+### 2. 审查角色（@openai-reviewer）
 
-Use the non-model Review MCP health/config check first:
+Run `scripts/review-health-probe.sh` first (or read its recorded result). The 审查角色
+（@openai-reviewer）is available when **both** hold:
 
-```text
-orchestrate_effective_config
-```
+- `~/.config/opencode/opencode.json`（可用 `DEV_FLOW_OPENCODE_CONFIG` 或 `OPENCODE_CONFIG`
+  覆盖路径）中存在 agent `"openai-reviewer"`（非空 JSON 对象）；
+- 该 agent 的 `model`（形如 `<provider>/<model>`）对应的 provider 段配置了 `options.apiKey`
+  （可用 `{env:XXX}` 引用格式；不硬查环境变量，key 运行时解析交给 opencode）。
 
-Require a usable current session. The probe (`scripts/review-health-probe.sh`) verifies that the
-orchestrator doctor is executable and exits 0 (or the configured fallback exists for `gstack-review`);
-it does not independently confirm `transport=stdio`, `registered=true`, or a live PID — treat an
-`available` result as "probe tooling present and runnable", and reserve the deeper live-session
-verification for the actual review invocation. When the configured provider is needed for an actual
-review, run the provider credential check without printing secrets. A WebUI process or another task's
-MCP process is not evidence for the current session. Do not call a model review just to test health.
+The probe records `transport=reviewer` when available; otherwise it falls back to a `gstack-review`
+skill candidate (`GSTACK_REVIEW_SKILL_ROOT`, or `<skills_root>/gstack/review` under
+`~/.config/opencode/skills`, `~/.claude/skills`, `~/.codex/skills`, `~/.cursor/skills`).
 
-When `scripts/environment-health-check.sh` runs, Review MCP health uses
-`scripts/review-health-probe.sh`. If orchestrator MCP is unavailable, the probe automatically
-falls back to an installed `gstack-review` skill (`/review`). Record the fallback in evidence as
-`review_mcp_unavailable;fallback=gstack-review`. Actual reviews must then use
-`code-review-workflow` with `Review path: fallback` and invoke the gstack `/review` workflow instead
-of `orchestrator_mcp → code_review`.
+A registered and alive 审查角色 agent is valid for the current task. Never conflate another
+session's reviewer result with the current one; treat WebUI or unrelated MCP processes as not
+evidence for this session's 审查角色 availability.
+
+If availability fails or times out, record the current-session failure and skip reviewer dispatch
+through the unavailable path. When `scripts/environment-health-check.sh` runs, 审查角色 health uses
+`scripts/review-health-probe.sh`. If the primary adapter is unavailable, the probe automatically
+falls back to an installed `gstackReview` skill (`/review`). Record the fallback in evidence as
+`fallback=gstack-review`. Actual reviews must then use `code-review-workflow` with
+`Review path: fallback` and invoke the gstack `/review` workflow through
+`scripts/run-review-fallback.sh` (which enforces token-bound packet + digest anti-forgery).
+
+**Fallback is selected only here — pre-dispatch, during environment-health-check.** Once dispatch
+has begun (the reviewer has been invoked), `timeout`/`missing`/`error`/`blocked`/`revise` must be
+recorded as-is and the review stops. Post-dispatch fallback switching is prohibited: the session's
+`review_selection` is locked on the first review report, and `record-gate` rejects any subsequent
+report whose adapter or `review_path` does not match the locked selection. Re-running
+`environment-health-check` after dispatch cannot unlock or change the selection.
 
 ### 3. Figma REST API skill
 
@@ -133,11 +184,11 @@ installed. Do not place tokens in artifacts, source code, or command output.
 Return one row for each capability:
 
 ```text
-Environment status: available | blocked | not-run
-App launch preflight: available | blocked | not-run
-DebugBridge: available | blocked | not-run
-Review MCP: available | blocked | not-run
-figma-rest-api: available | blocked | not-run
+Environment status: available | blocked
+App launch preflight: available | blocked | not-run | not-required
+DebugBridge: available | blocked | not-run | not-required
+审查角色: available | blocked | not-run | not-required
+figma-rest-api: available | blocked | not-run | not-required
 Evidence: <health response, run/session id, skill path, or exact error per row>
 Blockers: <none or exact next action>
 ```
@@ -145,17 +196,19 @@ Blockers: <none or exact next action>
 `available` means the requested check actually passed. DebugBridge is `available` only when the
 current App launch preflight succeeded and the subsequent `ensure_ports` and `ping` checks passed.
 `blocked` means the check ran but the capability cannot be used. `not-run` means the check could not
-be attempted; never convert it to `available`.
+be attempted; never convert it to `available`. `not-required` means the capability is not needed
+for the current session's `required_gates` and was not probed.
 
-When invoked by `dev-flow`, every capability required by the current session level must be
-`available` after `confirm-plan` and before implementation, gate recording, commit approval,
-commit, or TestFlight; `blocked` or `not-run` stops those actions. When invoked independently, the
-caller decides how to use the report. This skill reports health; it does not approve requirements,
-authorize source edits, select a review route, or approve a commit.
+When invoked by `dev-flow`, every required capability must be `available` after `confirm-plan`
+and before implementation, gate recording, commit approval, commit, or TestFlight; `blocked` or
+`not-run` stops those actions. Non-required capabilities do not participate in the overall
+status. When invoked independently, the caller decides how to use the report. This skill reports
+health; it does not approve requirements, authorize source edits, select a review route, or
+approve a commit.
 
 ## Safety rules
 
-- Keep Review MCP and Figma checks read-only and bounded; keep the required App launch preflight
+- Keep 审查角色 and Figma checks read-only and bounded; keep the required App launch preflight
   bounded to the current target and current App.
 - Never probe DebugBridge before the App launch preflight succeeds.
 - Do not kill, restart, or clean up another task's service process.

@@ -8,13 +8,33 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_ROOT="$(/usr/bin/mktemp -d)"
 trap '/bin/rm -rf -- "$TMP_ROOT"' EXIT
 
+# git init（record-gate 要求项目为 git 仓库）
+/usr/bin/git -C "$TMP_ROOT" init -q -b main 2>/dev/null || { /usr/bin/git -C "$TMP_ROOT" init -q && /usr/bin/git -C "$TMP_ROOT" checkout -qb main; }
+/usr/bin/git -C "$TMP_ROOT" config user.email "test@example.com"
+/usr/bin/git -C "$TMP_ROOT" config user.name "test"
+printf 'base\n' > "$TMP_ROOT/base.txt"
+/usr/bin/git -C "$TMP_ROOT" add base.txt
+/usr/bin/git -C "$TMP_ROOT" commit -qm "init"
+printf '.dev-flow/\n' > "$TMP_ROOT/.gitignore"
+/usr/bin/git -C "$TMP_ROOT" add .gitignore
+/usr/bin/git -C "$TMP_ROOT" commit -qm "gitignore"
+
 /bin/mkdir -p "$TMP_ROOT/.dev-flow/sessions" "$TMP_ROOT/bin"
 
 cat > "$TMP_ROOT/bin/ok-probe" <<'EOF'
 #!/usr/bin/env bash
-exit 0
+/usr/bin/python3 - "${DEV_FLOW_SESSION_ID:-test}" <<'PY'
+import json, sys
+print(json.dumps({"status":"available","evidence":"test_review_probe",
+                   "selected_adapter":"agent/openai-reviewer",
+                   "config_digest":"sha256:2c3a42ec7f48b8e721a47205e0cdd549d1238d657882590f2d42b10dd570fc36",
+                   "source":"project"}))
+PY
 EOF
 /bin/chmod +x "$TMP_ROOT/bin/ok-probe"
+
+# shellcheck source=test-helper-inject-ticket.sh
+source "$ROOT/scripts/test-helper-inject-ticket.sh"
 
 PROJECT_RULES="$TMP_ROOT/.dev-flow/rules.md"
 FAKE_GLOBAL="$TMP_ROOT/fake-global-rules.md"
@@ -46,16 +66,36 @@ run_health_review_only() {
 
 write_review_pass() {
   local session_id="$1"
-  /usr/bin/python3 - "$TMP_ROOT" "$session_id" <<'PY'
-import json, sys
+  # 注入 review_ticket
+  local ticket_info
+  ticket_info="$(inject_review_ticket "$session_id" "agent/openai-reviewer" "sha256:2c3a42ec7f48b8e721a47205e0cdd549d1238d657882590f2d42b10dd570fc36" "code-quality-review" "$TMP_ROOT/.dev-flow/sessions/$session_id.json" "$TMP_ROOT")"
+  local tt="${ticket_info% *}"
+  local td="${ticket_info#* }"
+  # 注入 result artifact
+  local ra_info
+  ra_info="$(inject_result_artifact "$session_id" "$TMP_ROOT/.dev-flow/sessions/$session_id.json" "$TMP_ROOT" "pass" "test-run-rules" "test review pass")"
+  local ra_path="${ra_info% *}"
+  local ra_digest="${ra_info#* }"
+  /usr/bin/python3 - "$TMP_ROOT" "$session_id" "$tt" "$td" "$ra_path" "$ra_digest" <<'PY'
+import json, sys, hashlib
 from pathlib import Path
 root = Path(sys.argv[1])
 session_id = sys.argv[2]
-(root / f"review-{session_id}.json").write_text(json.dumps({
+tt, td, ra_path, ra_digest = sys.argv[3:7]
+run_id = "test-run-rules"
+ref = f"test-host-ref-{run_id}"
+digest = "sha256:" + hashlib.sha256(f"test-handoff-{run_id}".encode()).hexdigest()
+(root / ".dev-flow" / "sessions" / f"review-{session_id}.json").write_text(json.dumps({
     "producer": "code-review-workflow", "schema_version": 1,
     "session_id": session_id, "gate": "review",
     "status": "pass", "reviewer_result": "pass",
     "evidence": "test review pass",
+    "selected_adapter": "agent/openai-reviewer",
+    "config_digest": "sha256:2c3a42ec7f48b8e721a47205e0cdd549d1238d657882590f2d42b10dd570fc36",
+    "run_id": run_id, "diff_evidence": "sha256:77f3bc83fc16f09cff43485a9233873df08c0cfe9fc98ff3db44fe8958157f23",
+    "adapter_result_ref": ref, "adapter_result_digest": digest,
+    "ticket_token": tt, "ticket_digest": td,
+    "result_artifact": ra_path, "result_artifact_digest": ra_digest,
 }) + "\n")
 PY
 }
@@ -67,7 +107,7 @@ setup_trivial_chain() {
   run_for "$session_id" confirm-plan >/dev/null
   run_health_review_only "$session_id"
   write_review_pass "$session_id"
-  run_for "$session_id" record-gate --name review --report "$TMP_ROOT/review-$session_id.json" >/dev/null
+  run_for "$session_id" record-gate --name review --report "$TMP_ROOT/.dev-flow/sessions/review-$session_id.json" >/dev/null
 }
 
 sha_of() {
@@ -124,7 +164,7 @@ DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=gchain \
   DEV_FLOW_REVIEW_MCP_HEALTH_CMD="$TMP_ROOT/bin/ok-probe" \
   /bin/bash "$ROOT/scripts/environment-health-check.sh" run >/dev/null
 write_review_pass gchain
-run_for_g gchain record-gate --name review --report "$TMP_ROOT/review-gchain.json" >/dev/null
+run_for_g gchain record-gate --name review --report "$TMP_ROOT/.dev-flow/sessions/review-gchain.json" >/dev/null
 printf '# tampered global rule\n' >> "$FAKE_GLOBAL"
 if run_for_g gchain approve-commit >/dev/null 2>&1; then
   echo "FAIL: approve-commit passed after global rules changed" >&2
@@ -149,11 +189,11 @@ Path(sys.argv[1]).write_text(json.dumps({
     "environment_health": {"status": "not-run", "checked_at": None, "checks": {}},
 }) + "\n")
 PY
-if run_for legacy configure-gates --required review 2>"$TMP_ROOT/legacy.err" >/dev/null; then
+if run_for legacy configure-gates --required review 2>"$TMP_ROOT/.dev-flow/sessions/legacy.err" >/dev/null; then
   echo "FAIL: legacy session passed gate action without rules record" >&2
   exit 1
 fi
-/usr/bin/grep -q "read-rules" "$TMP_ROOT/legacy.err" || { echo "FAIL: legacy rejection did not mention read-rules" >&2; exit 1; }
+/usr/bin/grep -q "read-rules" "$TMP_ROOT/.dev-flow/sessions/legacy.err" || { echo "FAIL: legacy rejection did not mention read-rules" >&2; exit 1; }
 run_for legacy read-rules >/dev/null
 run_for legacy configure-gates --required review >/dev/null
 
@@ -242,14 +282,16 @@ run_for env-fresh confirm-plan >/dev/null
 # 重新 confirm 后旧 env 过期（checked_at < 新 confirmed_at），重跑 env
 run_health_review_only env-fresh >/dev/null
 write_review_pass env-fresh
-run_for env-fresh record-gate --name review --report "$TMP_ROOT/review-env-fresh.json" >/dev/null
+run_for env-fresh record-gate --name review --report "$TMP_ROOT/.dev-flow/sessions/review-env-fresh.json" >/dev/null
 printf '\n# changed before record\n' >> "$PROJECT_RULES"
-if run_for env-fresh record-gate --name review --report "$TMP_ROOT/review-env-fresh.json" >/dev/null 2>&1; then
+if run_for env-fresh record-gate --name review --report "$TMP_ROOT/.dev-flow/sessions/review-env-fresh.json" >/dev/null 2>&1; then
   echo "FAIL: record-gate passed after project rules changed" >&2
   exit 1
 fi
 run_for env-fresh read-rules >/dev/null
-run_for env-fresh record-gate --name review --report "$TMP_ROOT/review-env-fresh.json" >/dev/null
+# ticket 已在第一次 record-gate pass 时消费，需重新签发
+write_review_pass env-fresh
+run_for env-fresh record-gate --name review --report "$TMP_ROOT/.dev-flow/sessions/review-env-fresh.json" >/dev/null
 
 # ---- 用例 16：read-rules 不重置其他 state 字段 ----
 /usr/bin/python3 - "$TMP_ROOT/.dev-flow/sessions/env-fresh.json" <<'PY'

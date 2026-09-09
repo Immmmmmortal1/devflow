@@ -30,7 +30,7 @@ Record:
 ```text
 Round: 1|2|3
 Review route:
-Review path: mcp | fallback
+Review path: reviewer | mcp | fallback
 Route result: pass | revise | blocked
 Finding decisions:
 Validation rerun:

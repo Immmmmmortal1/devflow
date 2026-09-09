@@ -43,10 +43,11 @@ Gate note:
   testflight 委托项目 fastlane：commit 完成且 HEAD 未漂移才执行
   <项目>/.dev-flow/testflight-command 中的命令并登记证据。
 Task level (--level, only meaningful for start):
-  trivial   - 文案/typo/纯逻辑微调专用轻量通道；环境门只要求 review_mcp；仅 review 门；
-              configure-gates 禁止加 runtime/figma_ui/ui_parity。
-  standard  - 默认；环境门要求 app_launch + review_mcp。
-  heavy     - 新 Figma UI / ui_review；环境门全 4 项（app_launch, debugbridge, review_mcp, figma_rest_api）。
+  --level 仍用于描述任务复杂度，但不再限制 gate 配置或环境门必需项。
+  环境门必需能力从 required_gates 派生（review 恒必需），非必需项标记 not-required。
+  trivial   - 文案/typo/纯逻辑微调；默认仅 review gate，环境门只 probe review_mcp。
+  standard  - 默认；普通 feature/bug；默认仅 review gate。
+  heavy     - 新 Figma UI / ui_review；需手动 configure-gates 加 runtime/figma_ui/ui_parity。
 EOF
 }
 
@@ -93,7 +94,7 @@ write_state() {
   local project_root="${5:-}"
   local level="${6:-}"
   mkdir -p "$STATE_DIR"
-  /usr/bin/python3 - "$STATE_FILE" "$SESSION_ID" "$action" "$session_type" "$task" "$required_gates" "$(now_utc)" "$project_root" "$level" <<'PY'
+  /usr/bin/python3 - "$STATE_FILE" "$SESSION_ID" "$action" "$session_type" "$task" "$required_gates" "$(now_utc)" "$project_root" "$level" "$ROOT/.dev-flow" "$SOURCE_ROOT" <<'PY'
 import hashlib
 import json
 import os
@@ -109,6 +110,10 @@ required_gates_arg = sys.argv[6]
 timestamp = sys.argv[7]
 project_root = sys.argv[8]
 level = sys.argv[9]
+trusted_root = sys.argv[10]
+source_root = sys.argv[11]
+sys.path.insert(0, os.path.join(source_root, 'scripts', 'lib'))
+from atomic_json_write import safe_atomic_write_json
 
 all_gates = ("figma_ui", "review", "runtime", "ui_parity")
 required_gates = [item for item in required_gates_arg.split(",") if item]
@@ -142,32 +147,10 @@ if path.exists():
         data = {}
 
 VALID_LEVELS = ("trivial", "standard", "heavy")
-TRIVIAL_FORBIDDEN_GATES = ("runtime", "figma_ui", "ui_parity")
 # 空 level 仅出现在非 start 命令（configure-gates/confirm 等），不校验；start 必须传合法 level
 if level and level not in VALID_LEVELS:
     raise SystemExit("Invalid level. Use trivial, standard, or heavy.")
 
-
-def atomic_write(path, data):
-    """原子写 session state：临时文件 + os.replace，权限 0600；拒绝 symlink 目标"""
-    import os
-    import tempfile
-
-    if path.is_symlink():
-        raise SystemExit("refusing to write session state through a symlink")
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".state-", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-            f.write("\n")
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, str(path))
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
 
 if action == "start":
     data = {
@@ -207,14 +190,7 @@ elif action == "configure-gates":
         raise SystemExit("No active dev-flow session. Run start first.")
     if data.get("confirmed_at"):
         raise SystemExit("Required gates cannot change after plan confirmation.")
-    # trivial 会话禁止加 runtime/figma_ui/ui_parity，防止绕过轻量通道
-    if data.get("level") == "trivial" and any(g in TRIVIAL_FORBIDDEN_GATES for g in required_gates):
-        raise SystemExit("trivial sessions may only configure the review gate.")
-    # 重型 gate（runtime/figma_ui/ui_parity）要求 heavy 环境门，防止 standard 环境检查不足
-    if data.get("level") != "heavy" and any(g in TRIVIAL_FORBIDDEN_GATES for g in required_gates):
-        raise SystemExit(
-            "runtime/figma_ui/ui_parity gates require a heavy session (restart with start --level heavy)."
-        )
+    # 能力模型：required_gates 决定必需环境能力，不再按 --level 限制 gate 配置
     data["required_gates"] = required_gates
     data["gate_results"] = make_gate_results(required_gates)
     data["session_id"] = session_id
@@ -293,7 +269,7 @@ elif action == "end":
 else:
     raise SystemExit(f"Unsupported action: {action}")
 
-atomic_write(path, data)
+safe_atomic_write_json(trusted_root, path, data)
 print(path)
 PY
 }
@@ -301,35 +277,20 @@ PY
 # read-rules：刷新 state 中全局+项目规则的 sha256/read_at（规则变更后的恢复入口）
 refresh_rules_state() {
   mkdir -p "$STATE_DIR"
-  /usr/bin/python3 - "$STATE_FILE" "$SESSION_ID" "$(now_utc)" <<'PY'
+  /usr/bin/python3 - "$STATE_FILE" "$SESSION_ID" "$(now_utc)" "$ROOT/.dev-flow" "$SOURCE_ROOT" <<'PY'
 import hashlib
 import json
 import os
 import sys
-import tempfile
 from pathlib import Path
-
-def atomic_write(path, data):
-    """原子写 session state：临时文件 + os.replace，权限 0600；拒绝 symlink 目标"""
-    if path.is_symlink():
-        raise SystemExit("refusing to write session state through a symlink")
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".state-", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-            f.write("\n")
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, str(path))
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
 
 state_path = Path(sys.argv[1])
 session_id = sys.argv[2]
 timestamp = sys.argv[3]
+trusted_root = sys.argv[4]
+source_root = sys.argv[5]
+sys.path.insert(0, os.path.join(source_root, 'scripts', 'lib'))
+from atomic_json_write import safe_atomic_write_json
 
 if not state_path.exists():
     raise SystemExit("No active dev-flow session. Run start first.")
@@ -360,7 +321,7 @@ for scope, env_name in (("global", "DEV_FLOW_GLOBAL_RULES_FILE"),
     }
 state["rules"] = rules_block
 state["session_id"] = session_id
-atomic_write(state_path, state)
+safe_atomic_write_json(trusted_root, state_path, state)
 print(state_path)
 PY
 }
@@ -401,35 +362,20 @@ PY
  record_environment() {
    local report_file="$1"
    mkdir -p "$STATE_DIR"
-   /usr/bin/python3 - "$STATE_FILE" "$SESSION_ID" "$report_file" "$(now_utc)" <<'PY'
+   /usr/bin/python3 - "$STATE_FILE" "$SESSION_ID" "$report_file" "$(now_utc)" "$ROOT/.dev-flow" "$SOURCE_ROOT" <<'PY'
 import json
 import os
 import sys
-import tempfile
 from pathlib import Path
-
-def atomic_write(path, data):
-    """原子写 session state：临时文件 + os.replace，权限 0600；拒绝 symlink 目标"""
-    if path.is_symlink():
-        raise SystemExit("refusing to write session state through a symlink")
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".state-", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-            f.write("\n")
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, str(path))
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
 
 state_path = Path(sys.argv[1])
 session_id = sys.argv[2]
 report_path = Path(sys.argv[3])
 checked_at = sys.argv[4]
+trusted_root = sys.argv[5]
+source_root = sys.argv[6]
+sys.path.insert(0, os.path.join(source_root, 'scripts', 'lib'))
+from atomic_json_write import safe_atomic_write_json
 
 if not state_path.exists():
     raise SystemExit("No active dev-flow session. Run start first.")
@@ -440,42 +386,90 @@ if not state.get("active"):
 # confirm 前误跑会被拒绝，防止 confirm 前的 env 被 confirm 后复用
 if not state.get("confirmed_at"):
     raise SystemExit("Environment health can only run after confirm-plan. Run confirm-plan first.")
-# 轻量防伪：环境健康报告必须位于本会话 state 目录内（environment-health-check.sh 的临时产出）
-try:
-    report_path.resolve().relative_to(state_path.resolve().parent)
-except ValueError:
-    raise SystemExit("Environment report must live inside the session state directory.")
-# 允许在 confirm-plan 之后更新环境健康（confirm 后重跑反映最新真实环境）
+# REPORT_FILE 现在使用系统临时目录（不在 STATE_DIR 内），
+# 路径位置不再作为防伪依据；改为依赖 producer/schema_version/session_id 内容校验。
 report = json.loads(report_path.read_text())
-if report.get("producer") != "environment-health-check" or report.get("schema_version") != 1:
+if report.get("producer") != "environment-health-check":
     raise SystemExit("Environment report was not produced by environment-health-check.")
+# schema_version 2：capability-based 模型（required/not-required 区分）。
+# 旧 schema_version 1（四项全 available）报告被明确拒绝：语义已变，需重跑 environment-health-check.sh。
+if report.get("schema_version") != 2:
+    raise SystemExit(
+        "Environment report schema_version must be 2. Stale v1 reports are rejected; "
+        "re-run scripts/environment-health-check.sh run after confirm-plan."
+    )
 if report.get("session_id") != session_id:
     raise SystemExit("Environment report belongs to another session.")
 checks = report.get("checks")
-# 按会话 level 裁剪必需检查项：trivial 只要求 review_mcp；standard 要求 app_launch+review_mcp；heavy 全 4 项
-LEVEL_CHECKS = {
-    "trivial": ("review_mcp",),
-    "standard": ("app_launch", "review_mcp"),
-    "heavy": ("app_launch", "debugbridge", "review_mcp", "figma_rest_api"),
-}
-level = state.get("level", "heavy")
-required = LEVEL_CHECKS.get(level, LEVEL_CHECKS["heavy"])
-all_checks = ("app_launch", "debugbridge", "review_mcp", "figma_rest_api")
-if not isinstance(checks, dict) or any(name not in checks for name in all_checks):
+all_check_keys = ("app_launch", "debugbridge", "review_mcp", "figma_rest_api")
+if not isinstance(checks, dict) or any(name not in checks for name in all_check_keys):
     raise SystemExit("Environment report is missing required checks.")
-# 必需项必须存在且状态合法；非必需项允许 not-required
-if any(checks[name].get("status") not in ("available", "blocked", "not-run") for name in required):
+# not-required 是 schema v2 新增的合法状态值（非 required capability）。
+valid_statuses = ("available", "blocked", "not-run", "not-required")
+if any(checks[name].get("status") not in valid_statuses for name in all_check_keys):
     raise SystemExit("Environment report contains an invalid check status.")
-derived_status = "available" if all(checks[name].get("status") == "available" for name in required) else "blocked"
+
+# 从 state.required_gates 派生 required capabilities（与环境探针同一映射）。
+gate_to_caps = {
+    "review": {"review_mcp"},
+    "runtime": {"app_launch", "debugbridge"},
+    "figma_ui": {"app_launch", "debugbridge", "figma_rest_api"},
+    "ui_parity": {"app_launch", "debugbridge", "figma_rest_api"},
+}
+required_caps = set()
+for gate in state.get("required_gates", ["review"]):
+    required_caps |= gate_to_caps.get(gate, set())
+
+# 严格契约：required capability 必须 available 才总 available；
+# 非 required capability 必须 not-required（不允许用伪 available 混过去）。
+for cap in all_check_keys:
+    status = checks[cap].get("status")
+    if cap in required_caps:
+        if status != "available":
+            pass  # required 但非 available → derived blocked
+    else:
+        if status != "not-required":
+            raise SystemExit(
+                f"Non-required capability {cap} must be not-required, got {status}. "
+                "Re-run scripts/environment-health-check.sh run to regenerate the report."
+            )
+
+derived_status = "available" if all(
+    checks[cap].get("status") == "available" for cap in required_caps
+) else "blocked"
 if report.get("status") != derived_status:
     raise SystemExit("Environment report status does not match its checks.")
 state["environment_health"] = {
     "status": derived_status,
     "checked_at": checked_at,
     "checks": checks,
+    "required_gates": report.get("required_gates", []),
+    "required_capabilities": report.get("required_capabilities", []),
 }
+# review_selection 绑定：从 review_mcp check 提取 selected_adapter/config_digest，
+# 写入 state.review_selection 供 record-gate 校验（no-result-washing）。
+# 已锁定（review 已记录）时不覆盖，防止 dispatch 后切换 adapter。
+# source=default 时不写 review_selection——默认策略不算"已配置"，
+# record-gate 会因无 review_selection 拒绝，迫使显式 install-review-backend.sh。
+review_mcp_check = checks.get("review_mcp") or {}
+existing_selection = state.get("review_selection") or {}
+if not existing_selection.get("locked"):
+    selected_adapter = review_mcp_check.get("selected_adapter")
+    config_digest = review_mcp_check.get("config_digest")
+    selection_source = review_mcp_check.get("source") or ""
+    skill_path = review_mcp_check.get("skill_path") or ""
+    if selected_adapter and config_digest and selection_source != "default":
+        state["review_selection"] = {
+            "selected_adapter": selected_adapter,
+            "selection_reason": review_mcp_check.get("selection_reason", ""),
+            "config_digest": config_digest,
+            "source": selection_source,
+            "skill_path": skill_path,
+            "resolved_at": checked_at,
+            "locked": False,
+        }
 state["session_id"] = session_id
-atomic_write(state_path, state)
+safe_atomic_write_json(trusted_root, state_path, state)
 print(state_path)
 if derived_status != "available":
     raise SystemExit(1)
@@ -486,45 +480,45 @@ record_gate() {
   local gate_name="$1"
   local report_file="$2"
   mkdir -p "$STATE_DIR"
-  /usr/bin/python3 - "$STATE_FILE" "$SESSION_ID" "$gate_name" "$report_file" "$(now_utc)" "$SOURCE_ROOT" <<'PY'
+  /usr/bin/python3 - "$STATE_FILE" "$SESSION_ID" "$gate_name" "$report_file" "$(now_utc)" "$ROOT/.dev-flow" "$SOURCE_ROOT" <<'PY'
 import hashlib
 import json
 import os
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
-
-def atomic_write(path, data):
-    """原子写 session state：临时文件 + os.replace，权限 0600；拒绝 symlink 目标"""
-    if path.is_symlink():
-        raise SystemExit("refusing to write session state through a symlink")
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".state-", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-            f.write("\n")
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, str(path))
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
 
 state_path = Path(sys.argv[1])
 session_id = sys.argv[2]
 gate_name = sys.argv[3]
 report_path = Path(sys.argv[4])
 recorded_at = sys.argv[5]
-devflow_root = Path(sys.argv[6]).resolve()
+trusted_root = sys.argv[6]
+source_root = sys.argv[7]
+sys.path.insert(0, os.path.join(source_root, 'scripts', 'lib'))
+from atomic_json_write import safe_atomic_write_json, safe_read_bytes
+devflow_root = Path(source_root).resolve()
 
 
 def sha256_of(path):
     # 计算 artifact 文件内容 sha256，用于与人工批准时记录的 digest 比对
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _validate_digest(value, field_name):
+    """统一 digest 格式校验：sha256: 前缀 + 严格 64 位小写十六进制。
+    拒绝：非字符串、空、无前缀、前缀后非 64 hex、大小写不符、多余字符。
+    """
+    if not isinstance(value, str) or not value:
+        raise SystemExit(f"{field_name} must be a non-empty sha256-prefixed digest.")
+    if not value.startswith("sha256:"):
+        raise SystemExit(f"{field_name} must start with 'sha256:' prefix.")
+    hex_part = value[len("sha256:"):]
+    if len(hex_part) != 64:
+        raise SystemExit(f"{field_name} must have exactly 64 hex chars after 'sha256:' (got {len(hex_part)}).")
+    if not all(c in "0123456789abcdef" for c in hex_part):
+        raise SystemExit(f"{field_name} must contain only lowercase hex chars after 'sha256:'.")
 
 if gate_name not in ("figma_ui", "review", "runtime", "ui_parity"):
     raise SystemExit("Unknown gate. Use figma_ui, review, runtime, or ui_parity.")
@@ -559,6 +553,9 @@ if gate_name == "review":
         "artifact_workspace", "artifact_validation_report", "baseline_report",
         "parity_confirmed_report", "repair_accepted_report", "verified_ids",
         "debugbridge_evidence", "review_path", "fallback_token", "packet_digest",
+        "selected_adapter", "config_digest", "ticket_token", "ticket_digest",
+        "result_artifact", "result_artifact_digest", "findings",
+        "adapter_result_ref", "adapter_result_digest",
     }
     extra = set(report.keys()) - REVIEW_ALLOWED_FIELDS
     if extra:
@@ -567,9 +564,82 @@ if gate_name == "review":
         raise SystemExit("review report producer must be code-review-workflow, review-health-probe, or ui-review.")
     if report.get("schema_version") != 1:
         raise SystemExit("review report schema_version must be 1.")
+    # selection binding（no-result-washing）：review_selection 必须存在且非空——
+    # 没有 environment-health-check 产生的 selection binding，review gate 必须拒绝。
+    # 旧会话（无 review_selection）必须重跑 environment-health-check。
+    # 例外：read-only ui_review（producer=ui-review，无 confirmed_at）不需要 review_selection，
+    # 因为 read-only 路径不做代码改动，无需 dispatch 审查。
+    # 一旦 dispatch 开始（review 报告已记录），不得切换 adapter——只有同一 adapter 的明确 pass 才过。
+    is_readonly_ui_review = (
+        report.get("producer") == "ui-review"
+        and not state.get("confirmed_at")
+    )
+    review_selection = state.get("review_selection") or {}
+    if not is_readonly_ui_review:
+        if not review_selection.get("selected_adapter"):
+            raise SystemExit(
+                "review gate requires an environment-generated review_selection. "
+                "Run scripts/environment-health-check.sh run before recording review results. "
+                "Old sessions without review_selection must re-run environment-health-check."
+            )
+        bound_adapter = review_selection.get("selected_adapter")
+        bound_digest = review_selection.get("config_digest")
+        bound_source = review_selection.get("source") or ""
+        report_adapter = report.get("selected_adapter")
+        report_digest = report.get("config_digest")
+        if not report_adapter:
+            raise SystemExit(
+                "review report must include selected_adapter "
+                "matching the session's review_selection (bound adapter: "
+                + str(bound_adapter) + ")."
+            )
+        # 统一 digest 格式校验：config_digest 必须 sha256: + 64 hex
+        _validate_digest(report_digest, "config_digest")
+        _validate_digest(bound_digest, "review_selection.config_digest")
+        if report_adapter != bound_adapter:
+            raise SystemExit(
+                "review report selected_adapter mismatch: report="
+                + str(report_adapter)
+                + " but session bound=" + str(bound_adapter)
+                + ". Post-dispatch adapter switching is not allowed."
+            )
+        if report_digest != bound_digest:
+            raise SystemExit(
+                "review report config_digest mismatch: the review config changed "
+                "after selection binding. Re-run environment-health-check.sh and "
+                "the review dispatch to rebind."
+            )
+        # 非 fallback 路径的 pass 报告要求 run_id + diff_evidence 非空（降低无 dispatch 证据误填风险）
+        review_path = report.get("review_path")
+        if report.get("status") == "pass" and review_path != "fallback":
+            if not report.get("run_id"):
+                raise SystemExit(
+                    "non-fallback review pass report must include a non-empty run_id "
+                    "(evidence of actual dispatch)."
+                )
+            if not report.get("diff_evidence"):
+                raise SystemExit(
+                    "non-fallback review pass report must include non-empty diff_evidence "
+                    "(evidence of reviewed diff)."
+                )
+            # 统一 digest 格式校验：diff_evidence（worktree digest）必须 sha256: + 64 hex
+            _validate_digest(report.get("diff_evidence"), "diff_evidence")
+        # post-dispatch fallback 禁止：review_selection 已锁定后，review_path="fallback"
+        # 的报告只在 locked adapter 本身是 skill/gstack 时才被接受。
+        # 这是独立于 adapter mismatch 的显式守卫：即使 adapter 字段匹配，
+        # 也不允许 dispatch 后切换到 fallback 路径。
+        if review_selection.get("locked") and report.get("review_path") == "fallback":
+            if bound_adapter != "skill/gstack":
+                raise SystemExit(
+                    "Post-dispatch fallback is not allowed: the session's adapter "
+                    "was locked to " + str(bound_adapter) + " at dispatch time. "
+                    "Timeout, missing result, error, blocked, or revise must fail "
+                    "as-is; do not switch to gstack-review fallback after dispatch "
+                    "has begun."
+                )
     # fallback 绑定：会话环境门处于 gstack-review fallback 时，报告必须出自
     # run-review-fallback.sh —— 校验一次性 fallback_token、packet_digest、报告路径三件套，
-    # 不跑 runner 手写 review_path=fallback 会被拒（防伪报路径/宿主审查伪报）
+    # 降低伪报路径/宿主审查伪报风险（不是对拥有写权限者的密码学证明）
     env = state.get("environment_health") or {}
     review_mcp_check = (env.get("checks") or {}).get("review_mcp") or {}
     env_evidence = str(review_mcp_check.get("evidence") or "")
@@ -640,8 +710,234 @@ if gate_name == "review":
                 raise SystemExit(
                     f"fallback {label} changed after issue; re-run scripts/run-review-fallback.sh."
                 )
-    if report.get("review_path") is not None and report.get("review_path") not in ("mcp", "fallback"):
-        raise SystemExit('review_path must be "mcp" or "fallback".')
+    if report.get("review_path") is not None and report.get("review_path") not in ("reviewer", "mcp", "fallback"):
+        raise SystemExit('review_path must be "reviewer", "mcp", or "fallback".')
+
+    # ── 统一 review dispatch ticket 验证 ──
+    # 所有 review 报告（agent/mcp/fallback）必须携带有效 ticket_token + ticket_digest。
+    # ticket 由 issue-review-ticket.sh 在 dispatch 前签发，record-gate 验证归属、
+    # adapter/config/route/worktree_digest、token/digest、未消费状态；pass 后原子标记 consumed。
+    # 诚实声明：本地完整性门用于防误操作/漂移/重放，降低误填风险；
+    # 不是对拥有本机写权限攻击者的密码学证明。
+    # 例外：read-only ui_review（无 confirmed_at）不需要 ticket（不做代码改动）。
+    if not is_readonly_ui_review:
+        report_ticket_token = report.get("ticket_token")
+        report_ticket_digest = report.get("ticket_digest")
+        if not report_ticket_token:
+            raise SystemExit(
+                "review report must include ticket_token. "
+                "Run scripts/issue-review-ticket.sh before dispatching the review."
+            )
+        # 统一 digest 格式校验：ticket_digest 必须 sha256: + 64 hex
+        _validate_digest(report_ticket_digest, "ticket_digest")
+        rt = state.get("review_ticket")
+        if not rt or not rt.get("token"):
+            raise SystemExit(
+                "no review_ticket in session state. "
+                "Run scripts/issue-review-ticket.sh before dispatching the review."
+            )
+        if rt.get("consumed"):
+            raise SystemExit(
+                "review ticket has already been consumed. "
+                "Run scripts/issue-review-ticket.sh again to issue a new ticket."
+            )
+        if rt.get("cancelled"):
+            raise SystemExit(
+                "review ticket has been cancelled. "
+                "Run scripts/issue-review-ticket.sh to issue a new ticket."
+            )
+        if report_ticket_token != rt.get("token"):
+            raise SystemExit(
+                "ticket_token mismatch: report token does not match the session's review_ticket."
+            )
+        # 重算 ticket artifact digest，防篡改
+        ticket_path = Path(rt.get("ticket_path") or "")
+        if not rt.get("ticket_path") or ticket_path.is_symlink() or not ticket_path.is_file():
+            raise SystemExit(
+                "review ticket artifact is missing or not a regular file: "
+                + str(rt.get("ticket_path"))
+            )
+        ticket_artifact = json.loads(ticket_path.read_text())
+        # 重算 ticket_digest（canonical JSON）
+        ticket_canonical = json.dumps(
+            {k: ticket_artifact[k] for k in sorted(ticket_artifact) if k != "ticket_digest"},
+            sort_keys=True, ensure_ascii=False, separators=(",", ":"),
+        )
+        actual_ticket_digest = "sha256:" + hashlib.sha256(ticket_canonical.encode("utf-8")).hexdigest()
+        if actual_ticket_digest != rt.get("ticket_digest"):
+            raise SystemExit(
+                "review ticket artifact changed after issue; re-run scripts/issue-review-ticket.sh."
+            )
+        if report_ticket_digest != rt.get("ticket_digest"):
+            raise SystemExit(
+                "ticket_digest mismatch: report digest does not match the session's review_ticket."
+            )
+        # adapter 一致性
+        if rt.get("selected_adapter") != bound_adapter:
+            raise SystemExit(
+                "ticket adapter mismatch: ticket was issued for "
+                + str(rt.get("selected_adapter"))
+                + " but session is bound to " + str(bound_adapter) + "."
+            )
+        # config_digest 一致性
+        if rt.get("config_digest") != bound_digest:
+            raise SystemExit(
+                "ticket config_digest mismatch: ticket was issued with a different config_digest."
+            )
+        # route 一致性（如果报告携带 route）
+        if report.get("route") and rt.get("route") and report.get("route") != rt.get("route"):
+            raise SystemExit(
+                "ticket route mismatch: report route="
+                + str(report.get("route"))
+                + " but ticket route=" + str(rt.get("route")) + "."
+            )
+
+        # ── worktree digest 重算：签发后 tracked/untracked 变化则拒绝 ──
+        # fail closed：recompute 失败（非 git / 无 base ref）必须拒绝，不跳过
+        # 用 ticket 中固化的 merge_base SHA 重算（防止 branch 移动导致漂移）
+        ticket_wt_digest = rt.get("worktree_digest")
+        ticket_merge_base = rt.get("merge_base", "")
+        if ticket_wt_digest:
+            # 统一 digest 格式校验：worktree_digest 必须 sha256: + 64 hex
+            _validate_digest(ticket_wt_digest, "review_ticket.worktree_digest")
+            project_root = Path(os.environ.get("DEV_FLOW_PROJECT_ROOT", state_path.parent.parent))
+            wt_args = [
+                "/usr/bin/python3", str(devflow_root / "scripts" / "lib" / "worktree_digest.py"),
+                str(project_root),
+            ]
+            # 传入 merge_base override 防止 branch 漂移
+            if ticket_merge_base:
+                wt_args.append("")  # base_ref override 为空
+                wt_args.append(ticket_merge_base)  # merge_base override
+            wt_result = subprocess.run(wt_args, capture_output=True, text=True)
+            if wt_result.returncode != 0:
+                raise SystemExit(
+                    "failed to recompute worktree digest: "
+                    + wt_result.stderr.strip()
+                    + ". The project must be a git repository with a resolvable base ref "
+                    "(main/master/origin/main or DEV_FLOW_REVIEW_BASE). "
+                    "Re-run scripts/issue-review-ticket.sh after ensuring git is initialized."
+                )
+            current_wt = json.loads(wt_result.stdout)
+            if current_wt["worktree_digest"] != ticket_wt_digest:
+                raise SystemExit(
+                    "worktree changed after ticket issue: tracked or untracked files "
+                    "were modified since the review ticket was issued. "
+                    "Re-run scripts/issue-review-ticket.sh (or run-review-fallback.sh) "
+                    "to issue a new ticket with the current worktree state, then re-review."
+                )
+
+        # ── result artifact 验证 ──
+        # record-gate 只接受受控 result artifact，降低误填风险。
+        # 诚实声明：本地完整性门用于防误操作/漂移/重放，降低误填风险；
+        # 不是对拥有本机写权限攻击者的密码学证明——攻击者拥有写权限可绕过一切本地校验。
+        result_artifact_path = report.get("result_artifact")
+        result_artifact_digest = report.get("result_artifact_digest")
+        if not result_artifact_path:
+            raise SystemExit(
+                "review report must include result_artifact. "
+                "Use scripts/record-review-result.sh to generate a controlled result artifact."
+            )
+        # 统一 digest 格式校验：result_artifact_digest 必须 sha256: + 64 hex
+        _validate_digest(result_artifact_digest, "result_artifact_digest")
+        ra_path = Path(result_artifact_path)
+        # 使用统一 safe_read_bytes：沿原始路径逐级 lstat，拒绝任何 symlink；
+        # 不可先 resolve 丢失原始组件、不可 ValueError pass。
+        # trusted_root = sessions 目录（未 resolve 的 normpath）
+        sessions_dir_unresolved = Path(os.path.normpath(str(state_path.parent)))
+        ra_data = safe_read_bytes(sessions_dir_unresolved, ra_path)
+        # 重算 digest（sha256 重算，防篡改）
+        actual_ra_digest = "sha256:" + hashlib.sha256(ra_data).hexdigest()
+        if actual_ra_digest != result_artifact_digest:
+            raise SystemExit(
+                "result_artifact_digest mismatch: file changed or digest is incorrect."
+            )
+        # 验证 artifact 字段与 report/ticket/selection 逐字段同源
+        ra_json = json.loads(ra_data)
+        ra_required = ["producer", "session_id", "adapter", "config_digest",
+                       "ticket_digest", "route", "worktree_digest", "run_id",
+                       "adapter_result_ref", "adapter_result_digest", "status",
+                       "reviewer_result"]
+        for field in ra_required:
+            if field not in ra_json:
+                raise SystemExit(f"result_artifact missing required field: {field}")
+        # producer 白名单：只接受受控 record-review-result.sh 产出的 producer
+        _CONTROLLED_PRODUCERS = {"code-review-workflow"}
+        if ra_json["producer"] not in _CONTROLLED_PRODUCERS:
+            raise SystemExit(
+                "result_artifact producer must be a controlled producer (code-review-workflow); "
+                "unknown producer rejected: " + str(ra_json["producer"])
+            )
+        # producer 严格绑定：artifact.producer 必须与 report.producer 一致
+        # code-review-workflow review reports 只接受受控 producer，producer mismatch 拒绝
+        if ra_json["producer"] != report.get("producer"):
+            raise SystemExit(
+                "result_artifact producer does not match report producer: "
+                "artifact=" + str(ra_json["producer"])
+                + " report=" + str(report.get("producer"))
+                + ". Producer mismatch rejected."
+            )
+        # session_id 绑定
+        if ra_json["session_id"] != session_id:
+            raise SystemExit("result_artifact session_id does not match current session.")
+        # adapter 绑定（== state ticket/selection 的 selected_adapter）
+        if ra_json["adapter"] != bound_adapter:
+            raise SystemExit("result_artifact adapter does not match session's bound adapter.")
+        # config_digest 绑定（== state ticket/selection）
+        if ra_json["config_digest"] != bound_digest:
+            raise SystemExit("result_artifact config_digest does not match session's config_digest.")
+        # ticket_digest 绑定（== state ticket）
+        if ra_json["ticket_digest"] != rt.get("ticket_digest"):
+            raise SystemExit("result_artifact ticket_digest does not match session's review_ticket.")
+        # route 绑定（== state ticket）
+        if ra_json["route"] != rt.get("route"):
+            raise SystemExit("result_artifact route does not match ticket's route.")
+        # worktree_digest 绑定（== state ticket 的 worktree_digest）
+        if ra_json["worktree_digest"] != rt.get("worktree_digest"):
+            raise SystemExit(
+                "result_artifact worktree_digest does not match ticket's worktree_digest."
+            )
+        # run_id 绑定（artifact.run_id == report.run_id）
+        if ra_json["run_id"] != report.get("run_id"):
+            raise SystemExit(
+                "result_artifact run_id does not match report run_id."
+            )
+        # status 绑定（artifact.status == report.status）
+        if ra_json["status"] != report.get("status"):
+            raise SystemExit("result_artifact status does not match report status.")
+        # reviewer_result 绑定（artifact.reviewer_result == report.reviewer_result）
+        if ra_json["reviewer_result"] != report.get("reviewer_result"):
+            raise SystemExit(
+                "result_artifact reviewer_result does not match report reviewer_result."
+            )
+        # adapter_result_ref 绑定（artifact == report，同源校验）
+        if ra_json.get("adapter_result_ref") != report.get("adapter_result_ref"):
+            raise SystemExit(
+                "result_artifact adapter_result_ref does not match report adapter_result_ref."
+            )
+        # adapter_result_digest 绑定（artifact == report，同源校验）
+        if ra_json.get("adapter_result_digest") != report.get("adapter_result_digest"):
+            raise SystemExit(
+                "result_artifact adapter_result_digest does not match report adapter_result_digest."
+            )
+        # 统一 digest 格式校验：adapter_result_digest 必须 sha256: + 64 hex
+        # 同时覆盖 artifact 和 report 两个来源
+        _validate_digest(ra_json.get("adapter_result_digest"), "result_artifact.adapter_result_digest")
+        _validate_digest(report.get("adapter_result_digest"), "report.adapter_result_digest")
+        # adapter_result_ref 非空校验（降低误填风险）
+        if not report.get("adapter_result_ref"):
+            raise SystemExit(
+                "review report must include adapter_result_ref "
+                "(host task id / orchestrator run id / gstack packet-run ref)."
+            )
+        # findings 一致性（如果 artifact 有 findings，report 必须有相同 findings）
+        ra_findings = ra_json.get("findings")
+        report_findings = report.get("findings")
+        if ra_findings is not None:
+            if ra_findings != report_findings:
+                raise SystemExit(
+                    "result_artifact findings do not match report findings."
+                )
 
 status = report.get("status")
 allowed = {
@@ -979,8 +1275,16 @@ state.setdefault("gate_results", {})[gate_name] = {
 # fallback 会话 review pass 后销毁一次性 token（revise/blocked 保留，允许同 packet 重录）
 if gate_name == "review" and status == "pass" and state.get("review_fallback"):
     state["review_fallback"] = None
+# 统一 ticket：review pass 后原子标记 consumed，禁止复用
+# （revise/blocked 不消费 ticket，允许同 ticket 重录或换新 ticket）
+if gate_name == "review" and status == "pass" and state.get("review_ticket"):
+    state["review_ticket"]["consumed"] = True
+# review selection 锁定：一旦 review 报告被记录（任何 status），锁定 review_selection，
+# 防止后续 re-run env-health 改变 selection 后用不同 adapter 的结果"洗"过门禁。
+if gate_name == "review" and state.get("review_selection"):
+    state["review_selection"]["locked"] = True
 state["session_id"] = session_id
-atomic_write(state_path, state)
+safe_atomic_write_json(trusted_root, state_path, state)
 print(state_path)
 PY
 }
@@ -990,7 +1294,7 @@ PY
 record_commit() {
   local message="$1"
   mkdir -p "$STATE_DIR"
-  DEV_FLOW_COMMIT_MESSAGE="$message" /usr/bin/python3 - "$STATE_FILE" "$SESSION_ID" "$(now_utc)" "$ROOT" <<'PY'
+  DEV_FLOW_COMMIT_MESSAGE="$message" /usr/bin/python3 - "$STATE_FILE" "$SESSION_ID" "$(now_utc)" "$ROOT" "$ROOT/.dev-flow" "$SOURCE_ROOT" <<'PY'
 import json
 import os
 import subprocess
@@ -998,28 +1302,14 @@ import sys
 import tempfile
 from pathlib import Path
 
-def atomic_write(path, data):
-    """原子写 session state：临时文件 + os.replace，权限 0600；拒绝 symlink 目标"""
-    if path.is_symlink():
-        raise SystemExit("refusing to write session state through a symlink")
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".state-", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-            f.write("\n")
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, str(path))
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
-
 state_path = Path(sys.argv[1])
 session_id = sys.argv[2]
 timestamp = sys.argv[3]
 project_root = Path(sys.argv[4])
+trusted_root = sys.argv[5]
+source_root = sys.argv[6]
+sys.path.insert(0, os.path.join(source_root, 'scripts', 'lib'))
+from atomic_json_write import safe_atomic_write_json
 # message 原样传给 git commit（不 strip），仅做非空与长度校验（≤200，与 state 规格一致），
 # 保证 state 记录值与实际提交完全一致
 message = os.environ.get("DEV_FLOW_COMMIT_MESSAGE", "")
@@ -1099,7 +1389,7 @@ state["commit_message"] = actual_msg
 # 新 commit 使旧 TestFlight 构建证据失效，重置为未上传
 state["testflight"] = {"status": "not-run", "uploaded_at": None, "evidence": None, "command_source": None}
 state["session_id"] = session_id
-atomic_write(state_path, state)
+safe_atomic_write_json(trusted_root, state_path, state)
 print(state_path)
 print(f"committed: {commit_hash}")
 PY
@@ -1109,7 +1399,7 @@ PY
 # 执行 <项目>/.dev-flow/testflight-command（或测试模式 DEV_FLOW_TESTFLIGHT_CMD）→ 登记证据。
 record_testflight() {
   mkdir -p "$STATE_DIR"
-  /usr/bin/python3 - "$STATE_FILE" "$SESSION_ID" "$(now_utc)" "$ROOT" <<'PY'
+  /usr/bin/python3 - "$STATE_FILE" "$SESSION_ID" "$(now_utc)" "$ROOT" "$ROOT/.dev-flow" "$SOURCE_ROOT" <<'PY'
 import json
 import os
 import subprocess
@@ -1117,28 +1407,14 @@ import sys
 import tempfile
 from pathlib import Path
 
-def atomic_write(path, data):
-    """原子写 session state：临时文件 + os.replace，权限 0600；拒绝 symlink 目标"""
-    if path.is_symlink():
-        raise SystemExit("refusing to write session state through a symlink")
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".state-", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-            f.write("\n")
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, str(path))
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
-
 state_path = Path(sys.argv[1])
 session_id = sys.argv[2]
 timestamp = sys.argv[3]
 project_root = Path(sys.argv[4])
+trusted_root = sys.argv[5]
+source_root = sys.argv[6]
+sys.path.insert(0, os.path.join(source_root, 'scripts', 'lib'))
+from atomic_json_write import safe_atomic_write_json
 
 if not state_path.exists():
     raise SystemExit("No active dev-flow session. Run start first.")
@@ -1251,7 +1527,7 @@ state["testflight"] = {
     "command_source": source,
 }
 state["session_id"] = session_id
-atomic_write(state_path, state)
+safe_atomic_write_json(trusted_root, state_path, state)
 print(state_path)
 if not ok:
     raise SystemExit("testflight command failed: " + output_tail[-500:])
@@ -1378,13 +1654,9 @@ case "$cmd" in
       echo "start requires --type bug|feature|ui_review" >&2
       exit 2
     fi
-    # --level 缺值拒绝（空字符串）；ui_review 必须 heavy，防止绕过真机/DebugBridge/Figma 环境门
+    # --level 缺值拒绝（空字符串）；--level 仍用于描述任务复杂度，但不再限制 gate 配置
     if [[ -z "$SESSION_LEVEL" ]]; then
       echo "start --level requires a value (trivial|standard|heavy)" >&2
-      exit 2
-    fi
-    if [[ "$SESSION_TYPE" == "ui_review" && "$SESSION_LEVEL" != "heavy" ]]; then
-      echo "ui_review requires --level heavy (full environment checks)" >&2
       exit 2
     fi
     # 双层规则机制第 1 层：start 硬读。全局规则缺失直接失败；项目规则缺失则建空模板

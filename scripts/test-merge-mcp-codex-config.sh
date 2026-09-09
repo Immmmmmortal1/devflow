@@ -5,6 +5,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_CONFIG="$(/usr/bin/mktemp)"
 trap '/bin/rm -f -- "$TMP_CONFIG"' EXIT
 
+# safe_write_external 默认 trusted_external_root=HOME；测试用 tmpdir 需显式指定
+export DEV_FLOW_TRUSTED_EXTERNAL_ROOT="$(dirname "$TMP_CONFIG")"
+
 cat >"$TMP_CONFIG" <<'TOML'
 model = "gpt-5"
 

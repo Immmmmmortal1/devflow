@@ -118,25 +118,53 @@ else
   echo "NOTE: DebugBridge MCP not bound for this app. Run install-dev-flow.sh or install-debugbridge-mcp.sh --project ..." >&2
 fi
 
-if [[ -f "$DEV_FLOW_PROJECT_ROOT/.dev-flow/review-backend.json" ]]; then
-  review_backend="$(DEV_FLOW_REVIEW_JSON="$DEV_FLOW_PROJECT_ROOT/.dev-flow/review-backend.json" python3 - <<'PY'
-import json
-import os
-print(json.load(open(os.environ["DEV_FLOW_REVIEW_JSON"], encoding="utf-8")).get("backend", "unknown"))
-PY
-)"
-  echo "Review backend: $review_backend"
-  if [[ "$review_backend" == "orchestrator" && -f "$DEV_FLOW_PROJECT_ROOT/.dev-flow/orchestrator-mcp-root" ]]; then
-    orch_root="$(tr -d '[:space:]' < "$DEV_FLOW_PROJECT_ROOT/.dev-flow/orchestrator-mcp-root")"
-    if [[ ! -x "$orch_root/codex-stdio-wrapper.sh" ]]; then
-      echo "WARNING: orchestrator-mcp root is bound but not installed:" >&2
-      echo "  $orch_root" >&2
-      exit 1
+if [[ -f "$DEV_FLOW_PROJECT_ROOT/.dev-flow/review-backend.local.json" || -f "$DEV_FLOW_PROJECT_ROOT/.dev-flow/review-backend.json" || -f "$HOME/.config/dev-flow/config.json" ]]; then
+  # 使用 review-backend resolver 解析当前有效配置（三层优先级 + v1 lazy 兼容）
+  review_selection="$(DEV_FLOW_PROJECT_ROOT="$DEV_FLOW_PROJECT_ROOT" /usr/bin/python3 "$DEV_FLOW_SCRIPTS_DIR/lib/review_backend_resolver.py" resolve 2>/dev/null || true)"
+  if [[ -n "$review_selection" ]]; then
+    review_backend="$(/usr/bin/python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("selected_adapter","unknown"))' <<< "$review_selection" 2>/dev/null || echo "unknown")"
+    review_source="$(/usr/bin/python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("source","unknown"))' <<< "$review_selection" 2>/dev/null || echo "unknown")"
+    echo "Review adapter: $review_backend (source: $review_source)"
+    # 探活 primary adapter
+    # shellcheck source=lib/reviewer-readiness.sh
+    source "$DEV_FLOW_SCRIPTS_DIR/lib/reviewer-readiness.sh"
+    # shellcheck source=lib/review-backend-resolver.sh
+    source "$DEV_FLOW_SCRIPTS_DIR/lib/review-backend-resolver.sh"
+    # 从 selection JSON 提取完整 adapter config（自定义 root/skill_path/config_path 生效）
+    doctor_adapter_cfg="$(/usr/bin/python3 -c 'import json,sys;d=json.load(sys.stdin);a=d.get("adapters",{});cfg=a.get(sys.argv[1],{});print(json.dumps(cfg) if cfg else "")' "$review_backend" <<< "$review_selection" 2>/dev/null || true)"
+    if probe_evidence="$(review_probe_adapter "$review_backend" "$doctor_adapter_cfg" 2>/dev/null)"; then
+      echo "  Probe: available ($probe_evidence)"
+    else
+      echo "  WARNING: primary adapter 探活失败 ($probe_evidence)" >&2
+      echo "  审查门禁可能阻塞；检查 adapter 配置或改用 fallback。" >&2
     fi
-    echo "Orchestrator MCP: $orch_root"
+    # orchestrator 额外检查 root
+    if [[ "$review_backend" == "mcp/orchestrator" && -f "$DEV_FLOW_PROJECT_ROOT/.dev-flow/orchestrator-mcp-root" ]]; then
+      orch_root="$(tr -d '[:space:]' < "$DEV_FLOW_PROJECT_ROOT/.dev-flow/orchestrator-mcp-root")"
+      if [[ ! -x "$orch_root/codex-stdio-wrapper.sh" ]]; then
+        echo "WARNING: orchestrator-mcp root is bound but not installed:" >&2
+        echo "  $orch_root" >&2
+        exit 1
+      fi
+      echo "Orchestrator MCP: $orch_root"
+    fi
+  else
+    echo "NOTE: review config exists but resolver failed. Run install-review-backend.sh to reconfigure." >&2
   fi
 else
-  echo "NOTE: review backend manifest missing. Run install-dev-flow.sh to choose orchestrator-mcp or gstack-review." >&2
+  echo "NOTE: review backend not configured. Run install-review-backend.sh to choose an adapter." >&2
+fi
+
+# Xcode target config（.xcodebuildmcp/config.yaml）：项目级真相源。
+# XcodeBuildMCP 2.x 只读 cwd/.xcodebuildmcp/config.yaml；MCP defaults 为空时，
+# Agent 应先跑 xcode-target resolver 把项目配置写进 task-scoped named profile。
+xcode_target_config="$DEV_FLOW_PROJECT_ROOT/.xcodebuildmcp/config.yaml"
+if [[ -f "$xcode_target_config" ]]; then
+  echo "Xcode target config: $xcode_target_config"
+  echo "  Run 'bash \"$DEV_FLOW_SOURCE_ROOT/scripts/dev-flow.sh\" xcode-target' to resolve it for session_set_defaults."
+else
+  echo "NOTE: No .xcodebuildmcp/config.yaml in app root." >&2
+  echo "  XcodeBuildMCP defaults are empty; provide target fields or create the config with session_set_defaults --persist." >&2
 fi
 
 LIB="$DEV_FLOW_SCRIPTS_DIR/lib"

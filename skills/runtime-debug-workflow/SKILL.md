@@ -18,13 +18,25 @@ meaning, UI parity, code review, or commit approval.
 
 Use the registered tools in this order:
 
-1. Expose deferred XcodeBuildMCP tools via `tool_search`, then `session_set_defaults` with the
-   named profile = current session id (`DEV_FLOW_SESSION_ID`, then `CODEX_THREAD_ID`, then
-   `CURSOR_CONVERSATION_ID`), then `session_show_defaults`, then `build_run_device` with
+1. Resolve the Xcode target from `<app-root>/.xcodebuildmcp/config.yaml`:
+   ```bash
+   bash /path/to/devflow/scripts/dev-flow.sh xcode-target
+   ```
+   The resolver outputs `target_kind` (`physical` or `simulator`) and `launch_action`
+   (`build_run_device` or `build_run_sim`). Use the resolver's `profile` fields to seed
+   `session_set_defaults`. If the resolver is `blocked`, ask the user or explicitly discover a
+   target; do not auto-scan.
+2. Expose deferred XcodeBuildMCP tools via `tool_search` with the query matching the resolver's
+   `launch_action`:
+   - physical: `tool_search("XcodeBuildMCP session_set_defaults session_show_defaults build_run_device device iOS")`
+   - simulator: `tool_search("XcodeBuildMCP session_set_defaults session_show_defaults build_run_sim simulator iOS")`
+   Then `session_set_defaults` with the named profile = current session id
+   (`DEV_FLOW_SESSION_ID`, then `CODEX_THREAD_ID`, then `CURSOR_CONVERSATION_ID`), then
+   `session_show_defaults`, then the resolved `build_run_device` or `build_run_sim` with
    `env: { DEV_FLOW_SESSION_ID: "<current session id>" }`.
-2. DebugBridge `get_debug_page` and UI actions such as `tap_element`.
-3. DebugBridge `inspect_ui` for the current App UIWindow/UIView tree.
-4. DebugBridge `read_app_logs` for the complete current-run in-memory log pool, or
+3. DebugBridge `get_debug_page` and UI actions such as `tap_element`.
+4. DebugBridge `inspect_ui` for the current App UIWindow/UIView tree.
+5. DebugBridge `read_app_logs` for the complete current-run in-memory log pool, or
    `wait_app_logs` for a new matching entry.
 
 If the required registered tool or the chosen target (physical device or Simulator) is unavailable,
@@ -38,16 +50,19 @@ real-device claim.
 ### 1. Establish the on-device runtime
 
 Resolve the current session id (`DEV_FLOW_SESSION_ID`, then `CODEX_THREAD_ID`, then
-`CURSOR_CONVERSATION_ID`; never `local` inside Cursor). Call `session_set_defaults` with
-`profile` set to that id and `createIfNotExists: true` for this worktree (setting
-workspacePath/scheme/configuration/platform/deviceId for the chosen target), then
-`session_show_defaults`. Confirm the project/workspace, scheme, configuration, and the chosen
-target (physical device or Simulator) belong to this repo, not a sibling worktree. Then call
-`build_run_device` with the current session id in the App launch environment so DebugBridge
-identity matches dev-flow:
+`CURSOR_CONVERSATION_ID`; never `local` inside Cursor). Resolve the Xcode target via
+`dev-flow.sh xcode-target`, then call `session_set_defaults` with `profile` set to that id and
+`createIfNotExists: true` for this worktree (setting the resolver's `profile` fields:
+workspacePath/projectPath, scheme, configuration, platform, deviceId/simulatorId for the chosen
+target), then `session_show_defaults`. Confirm the project/workspace, scheme, configuration, and
+the chosen target (physical device or Simulator) belong to this repo, not a sibling worktree.
+Then call the resolved launch action (`build_run_device` for physical, `build_run_sim` for
+Simulator) with the current session id in the App launch environment so DebugBridge identity
+matches dev-flow:
 
 ```text
-build_run_device({ env: { DEV_FLOW_SESSION_ID: "<current session id>" } })
+build_run_device({ env: { DEV_FLOW_SESSION_ID: "<current session id>" } })   # physical
+build_run_sim({ env: { DEV_FLOW_SESSION_ID: "<current session id>" } })      # simulator
 ```
 
 Without this env, the App reports `sessionID: local` in `/identity` and environment-health /
@@ -119,9 +134,10 @@ the source of truth merely to make logging easier.
 
 ### 6. Rebuild and rerun
 
-After a diagnostic or relevant source change, call `build_run_device` again, repeat the same UI
-actions, inspect the tree, and query the current-run logs. Keep reusable safe diagnostics only when
-they are within the confirmed scope; remove noisy one-off output before handoff.
+After a diagnostic or relevant source change, call the resolved launch action (`build_run_device`
+for physical, `build_run_sim` for Simulator) again, repeat the same UI actions, inspect the tree,
+and query the current-run logs. Keep reusable safe diagnostics only when they are within the
+confirmed scope; remove noisy one-off output before handoff.
 
 ### 7. Return a runtime result
 

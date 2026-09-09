@@ -10,6 +10,18 @@ from pathlib import Path
 
 from merge_mcp_codex_common import append_mcp_block, strip_mcp_server_sections
 
+# 延迟导入 atomic_json_write（只在需要写入时 import）
+def _import_safe_write():
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from atomic_json_write import safe_write_external
+    return safe_write_external
+
+def _get_trusted_external_root():
+    """从环境变量获取 trusted_external_root（测试用），默认 None（safe_write_external 内部回退到 HOME）。"""
+    import os
+    return os.environ.get("DEV_FLOW_TRUSTED_EXTERNAL_ROOT") or None
+
 
 def detect_device_udid() -> str:
     try:
@@ -38,6 +50,8 @@ def detect_device_udid() -> str:
 
 
 def merge_cursor(config_path: Path, server_path: str, node_path: str, udid: str) -> bool:
+    safe_write_external = _import_safe_write()
+    ter = _get_trusted_external_root()
     data: dict = {}
     if config_path.is_file() and config_path.read_text(encoding="utf-8").strip():
         data = json.loads(config_path.read_text(encoding="utf-8"))
@@ -53,8 +67,7 @@ def merge_cursor(config_path: Path, server_path: str, node_path: str, udid: str)
     if existing == entry:
         return False
     servers["ui_dbugbridge_mcp"] = entry
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    safe_write_external(config_path, json.dumps(data, indent=2) + "\n", mode=0o644, trusted_external_root=ter)
     return True
 
 
@@ -64,6 +77,8 @@ def toml_quote(value: str) -> str:
 
 
 def merge_codex(config_path: Path, server_path: str, node_path: str, udid: str) -> bool:
+    safe_write_external = _import_safe_write()
+    ter = _get_trusted_external_root()
     block_lines = [
         "[mcp_servers.ui_dbugbridge_mcp]",
         f'command = "{toml_quote(node_path)}"',
@@ -78,26 +93,31 @@ def merge_codex(config_path: Path, server_path: str, node_path: str, udid: str) 
     block = "\n".join(block_lines) + "\n"
 
     if not config_path.is_file():
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-        config_path.write_text(block, encoding="utf-8")
+        safe_write_external(config_path, block, mode=0o644, trusted_external_root=ter)
         return True
 
     text = config_path.read_text(encoding="utf-8")
     updated = append_mcp_block(strip_mcp_server_sections(text, "ui_dbugbridge_mcp"), block)
     changed = updated != text
     if changed:
-        config_path.write_text(updated, encoding="utf-8")
+        safe_write_external(config_path, updated, mode=0o644, trusted_external_root=ter)
     return changed
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--platform", choices=("cursor", "codex"), required=True)
+    parser.add_argument("--platform", choices=("cursor", "codex", "opencode"), required=True)
     parser.add_argument("--server-path", required=True)
     parser.add_argument("--node-path", required=True)
     parser.add_argument("--config-path", required=True)
     parser.add_argument("--device-udid", default="")
     args = parser.parse_args()
+
+    if args.platform == "opencode":
+        # opencode: 不合并 host MCP config（opencode 自行管理）
+        print(f"config=opencode-managed")
+        print(f"changed=skipped")
+        return 0
 
     udid = args.device_udid or detect_device_udid()
     config_path = Path(args.config_path).expanduser()

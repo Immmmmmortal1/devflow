@@ -33,6 +33,9 @@ cat > "$TMP_ROOT/gstack-skill/review/SKILL.md" <<'EOF'
 按清单审查 diff：SQL 安全、信任边界、副作用。输出 findings。
 EOF
 
+# shellcheck source=test-helper-inject-ticket.sh
+source "$ROOT/scripts/test-helper-inject-ticket.sh"
+
 run_for() {
   local session_id="$1"
   shift
@@ -54,6 +57,28 @@ craft_state() {
 import json, sys
 from pathlib import Path
 path, session_id, env_json, confirmed = Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
+env = json.loads(env_json)
+# 根据 env 类型设置 review_selection（模拟 record_environment 产出）
+review_mcp = (env.get("checks") or {}).get("review_mcp") or {}
+evidence = review_mcp.get("evidence") or ""
+if "fallback=gstack-review" in evidence:
+    review_selection = {
+        "selected_adapter": "skill/gstack",
+        "selection_reason": "fallback",
+        "config_digest": "sha256:702652b5b4c29de426813882e80065a4dbb175c21fd8210210d0f7d4392d9037",
+        "source": "project",
+        "resolved_at": env.get("checked_at") or "2026-08-26T00:00:00Z",
+        "locked": False,
+    }
+else:
+    review_selection = {
+        "selected_adapter": "mcp/orchestrator",
+        "selection_reason": "default",
+        "config_digest": "sha256:1b5d51f449fc1c5ebfa17d74e470e0597362c33481545fb3242dcc9cfe1f2cb2",
+        "source": "project",
+        "resolved_at": env.get("checked_at") or "2026-08-26T00:00:00Z",
+        "locked": False,
+    }
 path.write_text(json.dumps({
     "session_id": session_id, "active": True, "type": "feature", "task": session_id,
     "level": "trivial", "started_at": "2026-08-26T00:00:00Z",
@@ -61,7 +86,8 @@ path.write_text(json.dumps({
     "commit_approved_at": None, "ended_at": None,
     "required_gates": ["review"],
     "gate_results": {"review": {"status": "pending", "evidence": None, "recorded_at": None}},
-    "environment_health": json.loads(env_json),
+    "environment_health": env,
+    "review_selection": review_selection,
 }) + "\n")
 PY
 }
@@ -83,17 +109,42 @@ PY
 
 write_fb_report() {
   local session_id="$1" token="$2" digest="$3" path="$4"
-  /usr/bin/python3 - "$session_id" "$token" "$digest" "$path" <<'PY'
+  local state_file="$TMP_ROOT/.dev-flow/sessions/$session_id.json"
+  # 从 state 读取 ticket_token/ticket_digest（runner 签发后写入 state.review_ticket）
+  local tt td
+  read -r tt td < <(/usr/bin/python3 - "$state_file" <<'PY'
 import json, sys
 from pathlib import Path
-session_id, token, digest, path = sys.argv[1:5]
+rt = (json.loads(Path(sys.argv[1]).read_text()).get("review_ticket") or {})
+print(rt.get("token") or "", rt.get("ticket_digest") or "")
+PY
+)
+  # 创建 result artifact
+  local ra_info
+  ra_info="$(inject_result_artifact "$session_id" "$state_file" "$TMP_ROOT" "pass" "fallback-run" "fallback review done per injected gstack workflow")"
+  local ra_path="${ra_info% *}"
+  local ra_digest="${ra_info#* }"
+  /usr/bin/python3 - "$session_id" "$token" "$digest" "$path" "$tt" "$td" "$ra_path" "$ra_digest" <<'PY'
+import json, sys, hashlib
+from pathlib import Path
+session_id, token, digest, path, tt, td, ra_path, ra_digest = sys.argv[1:9]
+run_id = "fallback-run"
+ref = f"test-host-ref-{run_id}"
+adigest = "sha256:" + hashlib.sha256(f"test-handoff-{run_id}".encode()).hexdigest()
 Path(path).write_text(json.dumps({
     "producer": "code-review-workflow", "schema_version": 1,
     "session_id": session_id, "gate": "review",
     "route": "code-quality-review", "review_path": "fallback",
     "fallback_token": token, "packet_digest": digest,
+    "ticket_token": tt, "ticket_digest": td,
+    "result_artifact": ra_path, "result_artifact_digest": ra_digest,
     "status": "pass", "reviewer_result": "pass",
     "evidence": "fallback review done per injected gstack workflow",
+    "selected_adapter": "skill/gstack",
+    "config_digest": "sha256:702652b5b4c29de426813882e80065a4dbb175c21fd8210210d0f7d4392d9037",
+    "run_id": run_id,
+    "adapter_result_ref": ref, "adapter_result_digest": adigest,
+    "diff_evidence": "sha256:8483b031c0c19ec0ef92a40c1aa73c6a5c4c0b196ad082271ab165298bac3ec6",
 }) + "\n")
 PY
 }
@@ -156,7 +207,7 @@ fi
 # ---- 用例 6：fallback 会话 + 手写报告（无 token）→ 拒 ----
 craft_state fb "$ENV_FALLBACK" "$CONF"
 run_for fb read-rules >/dev/null
-/usr/bin/python3 - "$TMP_ROOT/report-fb.json" <<'PY'
+/usr/bin/python3 - "$TMP_ROOT/.dev-flow/sessions/report-fb.json" <<'PY'
 import json, sys
 from pathlib import Path
 Path(sys.argv[1]).write_text(json.dumps({
@@ -164,9 +215,11 @@ Path(sys.argv[1]).write_text(json.dumps({
     "session_id": "fb", "gate": "review", "route": "code-quality-review",
     "review_path": "fallback", "status": "pass", "reviewer_result": "pass",
     "evidence": "hand-written without running the runner",
+    "selected_adapter": "skill/gstack",
+    "config_digest": "sha256:702652b5b4c29de426813882e80065a4dbb175c21fd8210210d0f7d4392d9037",
 }) + "\n")
 PY
-if run_for fb record-gate --name review --report "$TMP_ROOT/report-fb.json" 2>"$TMP_ROOT/fb.err"; then
+if run_for fb record-gate --name review --report "$TMP_ROOT/.dev-flow/sessions/report-fb.json" 2>"$TMP_ROOT/fb.err"; then
   echo "FAIL: hand-written fallback report accepted without token" >&2
   exit 1
 fi
@@ -200,8 +253,8 @@ fi
 /usr/bin/grep -q "packet_digest mismatch" "$TMP_ROOT/fb7b.err" || { echo "FAIL: fb7b message wrong" >&2; exit 1; }
 
 # ---- 用例 7c：报告路径不是 runner 签发路径 → 拒 ----
-write_fb_report fb7b "$T7B" "$D7B" "$TMP_ROOT/wrong-path.json"
-if run_for fb7b record-gate --name review --report "$TMP_ROOT/wrong-path.json" 2>"$TMP_ROOT/fb7c.err"; then
+write_fb_report fb7b "$T7B" "$D7B" "$TMP_ROOT/.dev-flow/sessions/wrong-path.json"
+if run_for fb7b record-gate --name review --report "$TMP_ROOT/.dev-flow/sessions/wrong-path.json" 2>"$TMP_ROOT/fb7c.err"; then
   echo "FAIL: wrong report path accepted" >&2
   exit 1
 fi
@@ -210,7 +263,7 @@ fi
 # ---- 用例 8：非 fallback 会话 + review_path=bogus → 枚举拒 ----
 craft_state fb8 "$ENV_MCP" "$CONF"
 run_for fb8 read-rules >/dev/null
-/usr/bin/python3 - "$TMP_ROOT/report-fb8.json" <<'PY'
+/usr/bin/python3 - "$TMP_ROOT/.dev-flow/sessions/report-fb8.json" <<'PY'
 import json, sys
 from pathlib import Path
 Path(sys.argv[1]).write_text(json.dumps({
@@ -218,27 +271,47 @@ Path(sys.argv[1]).write_text(json.dumps({
     "session_id": "fb8", "gate": "review", "route": "code-quality-review",
     "review_path": "bogus", "status": "pass", "reviewer_result": "pass",
     "evidence": "x",
+    "selected_adapter": "mcp/orchestrator",
+    "config_digest": "sha256:1b5d51f449fc1c5ebfa17d74e470e0597362c33481545fb3242dcc9cfe1f2cb2",
+    "run_id": "test-run-fb8", "diff_evidence": "sha256:18a702bb84503db439651f6823403513e728e22ccaa019a502d4214880a71cb1",
 }) + "\n")
 PY
-if run_for fb8 record-gate --name review --report "$TMP_ROOT/report-fb8.json" 2>"$TMP_ROOT/fb8.err"; then
+if run_for fb8 record-gate --name review --report "$TMP_ROOT/.dev-flow/sessions/report-fb8.json" 2>"$TMP_ROOT/fb8.err"; then
   echo "FAIL: bogus review_path accepted" >&2
   exit 1
 fi
-/usr/bin/grep -q 'must be "mcp" or "fallback"' "$TMP_ROOT/fb8.err" || { echo "FAIL: fb8 message wrong" >&2; exit 1; }
+/usr/bin/grep -q 'must be "reviewer", "mcp", or "fallback"' "$TMP_ROOT/fb8.err" || { echo "FAIL: fb8 message wrong" >&2; exit 1; }
 
 # ---- 用例 9：非 fallback 会话 + 无 review_path → 向后兼容通过 ----
 craft_state mc "$ENV_MCP" "$CONF"
 run_for mc read-rules >/dev/null
-/usr/bin/python3 - "$TMP_ROOT/report-mc.json" <<'PY'
-import json, sys
+# 注入 review_ticket（非 fallback 会话需要统一 ticket）
+mc_ticket="$(inject_review_ticket "mc" "mcp/orchestrator" "sha256:1b5d51f449fc1c5ebfa17d74e470e0597362c33481545fb3242dcc9cfe1f2cb2" "code-quality-review" "$TMP_ROOT/.dev-flow/sessions/mc.json" "$TMP_ROOT")"
+mc_tt="${mc_ticket% *}"
+mc_td="${mc_ticket#* }"
+mc_ra="$(inject_result_artifact "mc" "$TMP_ROOT/.dev-flow/sessions/mc.json" "$TMP_ROOT" "pass" "test-run-mc" "x")"
+mc_ra_path="${mc_ra% *}"
+mc_ra_digest="${mc_ra#* }"
+/usr/bin/python3 - "$TMP_ROOT/.dev-flow/sessions/report-mc.json" "$mc_tt" "$mc_td" "$mc_ra_path" "$mc_ra_digest" <<'PY'
+import json, sys, hashlib
 from pathlib import Path
+tt, td, ra_path, ra_digest = sys.argv[2:6]
+run_id = "test-run-mc"
+ref = f"test-host-ref-{run_id}"
+digest = "sha256:" + hashlib.sha256(f"test-handoff-{run_id}".encode()).hexdigest()
 Path(sys.argv[1]).write_text(json.dumps({
     "producer": "code-review-workflow", "schema_version": 1,
     "session_id": "mc", "gate": "review", "route": "code-quality-review",
     "status": "pass", "reviewer_result": "pass", "evidence": "x",
+    "selected_adapter": "mcp/orchestrator",
+    "config_digest": "sha256:1b5d51f449fc1c5ebfa17d74e470e0597362c33481545fb3242dcc9cfe1f2cb2",
+    "run_id": run_id, "diff_evidence": "sha256:a8d6600ff219d338ee8a13b3cf04e9433dfe44e82fce45ec308af4995852b601",
+    "adapter_result_ref": ref, "adapter_result_digest": digest,
+    "ticket_token": tt, "ticket_digest": td,
+    "result_artifact": ra_path, "result_artifact_digest": ra_digest,
 }) + "\n")
 PY
-run_for mc record-gate --name review --report "$TMP_ROOT/report-mc.json" >/dev/null
+run_for mc record-gate --name review --report "$TMP_ROOT/.dev-flow/sessions/report-mc.json" >/dev/null
 
 # ---- 用例 10：工作区未提交改动（unstaged 修改 + untracked）进入审查包 ----
 # 先清掉前序用例在项目根留下的 untracked 测试产物（保留 gstack-skill），
@@ -329,15 +402,17 @@ fi
 /usr/bin/grep -q "packet file changed" "$TMP_ROOT/fb7d.err" || { echo "FAIL: fb7d message wrong" >&2; exit 1; }
 /usr/bin/git -C "$TMP_ROOT" checkout -q -- . 2>/dev/null || true
 
-# ---- 用例 15：packet 路径预建 symlink → mv 原子替换，symlink 目标不被污染 ----
+# ---- 用例 15：packet 路径预建 symlink → safe_atomic_write_bytes 拒绝（不写 symlink）----
 craft_state sl "$ENV_FALLBACK"
 run_for sl read-rules >/dev/null
 printf 'precious content\n' > "$TMP_ROOT/symlink-target.txt"
 /bin/ln -s "$TMP_ROOT/symlink-target.txt" "$TMP_ROOT/.dev-flow/sessions/.sl.review-packet.txt"
-run_runner sl >/dev/null
-[[ "$(cat "$TMP_ROOT/symlink-target.txt")" == "precious content" ]] || { echo "FAIL: symlink target overwritten through packet write" >&2; exit 1; }
-[[ ! -L "$TMP_ROOT/.dev-flow/sessions/.sl.review-packet.txt" ]] || { echo "FAIL: packet path is still a symlink after atomic replace" >&2; exit 1; }
-/usr/bin/grep -q "git diff --stat" "$TMP_ROOT/.dev-flow/sessions/.sl.review-packet.txt" || { echo "FAIL: packet content missing after atomic replace" >&2; exit 1; }
+if run_runner sl >/dev/null 2>&1; then
+  echo "FAIL: runner should reject symlinked packet path (safe_atomic_write_bytes)" >&2
+  exit 1
+fi
+[[ "$(cat "$TMP_ROOT/symlink-target.txt")" == "precious content" ]] || { echo "FAIL: symlink target overwritten despite rejection" >&2; exit 1; }
+echo "OK: symlinked packet path rejected, symlink target not polluted"
 /bin/rm -f "$TMP_ROOT/.dev-flow/sessions/.sl.review-packet.txt" "$TMP_ROOT/symlink-target.txt"
 
 # ---- 用例 16：换行文件名的 untracked 文件安全入包 ----
@@ -374,18 +449,40 @@ craft_state fb18 "$ENV_FALLBACK" "$CONF"
 run_for fb18 read-rules >/dev/null
 run_runner fb18 >/dev/null
 read -r T18 D18 P18 <<< "$(read_fb fb18)"
-/usr/bin/python3 - "$P18" "$T18" "$D18" <<'PY'
+# 从 state 读取 ticket（runner 签发）
+read -r TT18 TD18 < <(/usr/bin/python3 - "$TMP_ROOT/.dev-flow/sessions/fb18.json" <<'PY'
 import json, sys
 from pathlib import Path
-path, token, digest = sys.argv[1:4]
+rt = (json.loads(Path(sys.argv[1]).read_text()).get("review_ticket") or {})
+print(rt.get("token") or "", rt.get("ticket_digest") or "")
+PY
+)
+# 创建 result artifact（route 与 ticket 不同，测试 route mismatch）
+fb18_ra="$(inject_result_artifact "fb18" "$TMP_ROOT/.dev-flow/sessions/fb18.json" "$TMP_ROOT" "pass" "test-run-fb18" "route mismatch attempt")"
+fb18_ra_path="${fb18_ra% *}"
+fb18_ra_digest="${fb18_ra#* }"
+/usr/bin/python3 - "$P18" "$T18" "$D18" "$TT18" "$TD18" "$fb18_ra_path" "$fb18_ra_digest" <<'PY'
+import json, sys, hashlib
+from pathlib import Path
+path, token, digest, tt, td, ra_path, ra_digest = sys.argv[1:8]
+run_id = "test-run-fb18"
+ref = f"test-host-ref-{run_id}"
+adigest = "sha256:" + hashlib.sha256(f"test-handoff-{run_id}".encode()).hexdigest()
 Path(path).write_text(json.dumps({
     "producer": "code-review-workflow", "schema_version": 1,
     "session_id": "fb18", "gate": "review",
     "route": "api-contract-review",  # 签发出 code-quality-review，报告填别的 route
     "review_path": "fallback",
     "fallback_token": token, "packet_digest": digest,
+    "ticket_token": tt, "ticket_digest": td,
+    "result_artifact": ra_path, "result_artifact_digest": ra_digest,
     "status": "pass", "reviewer_result": "pass",
     "evidence": "route mismatch attempt",
+    "selected_adapter": "skill/gstack",
+    "config_digest": "sha256:702652b5b4c29de426813882e80065a4dbb175c21fd8210210d0f7d4392d9037",
+    "run_id": run_id,
+    "adapter_result_ref": ref, "adapter_result_digest": adigest,
+    "diff_evidence": "sha256:8483b031c0c19ec0ef92a40c1aa73c6a5c4c0b196ad082271ab165298bac3ec6",
 }) + "\n")
 PY
 if run_for fb18 record-gate --name review --report "$P18" 2>"$TMP_ROOT/fb18.err"; then
@@ -426,5 +523,117 @@ if run_for fb20 record-gate --name review --report "$P20" 2>"$TMP_ROOT/fb20.err"
 fi
 /usr/bin/grep -q "through a symlink" "$TMP_ROOT/fb20.err" || { echo "FAIL: fb20 message wrong" >&2; exit 1; }
 /bin/rm -f "$P20" "$TMP_ROOT/external-report.json"
+
+# ---- 用例 21：packet 路径预建 symlink → runner 写入拒绝（trusted-boundary 安全辅助）----
+# 场景：PACKET_FILE 被预建为 symlink 指向外部文件。
+# safe_atomic_write_bytes 应拒绝写入 symlink 目标。
+craft_state fb21 "$ENV_FALLBACK" "$CONF"
+run_for fb21 read-rules >/dev/null
+
+# 预建 packet 路径为 symlink
+PACKET21="$TMP_ROOT/.dev-flow/sessions/.fb21.review-packet.txt"
+echo "evil" > "$TMP_ROOT/external-packet.txt"
+/bin/rm -f "$PACKET21"
+/bin/ln -s "$TMP_ROOT/external-packet.txt" "$PACKET21"
+
+if run_runner fb21 >/dev/null 2>&1; then
+  # 检查 packet 是否被写入 symlink 目标（不应如此）
+  if /usr/bin/grep -q "evil" "$TMP_ROOT/external-packet.txt" 2>/dev/null; then
+    echo "FAIL: runner wrote packet through symlink to external file" >&2
+    exit 1
+  fi
+  echo "FAIL: runner should reject symlinked packet path" >&2
+  exit 1
+fi
+echo "OK: runner rejects symlinked packet path (trusted-boundary safe write)"
+
+# 清理 symlink，重跑 runner 验证正常路径仍工作
+/bin/rm -f "$PACKET21"
+/bin/rm -f "$TMP_ROOT/external-packet.txt"
+run_runner fb21 >/dev/null
+read -r T21 D21 P21 <<< "$(read_fb fb21)"
+if [[ -z "$T21" ]]; then
+  echo "FAIL: after removing symlink, runner should write state normally" >&2
+  exit 1
+fi
+echo "OK: after removing symlink, runner writes packet normally"
+
+# ---- 用例 22: sessions -> 外部 symlink → runner 在创建任何外部文件前拒绝 ----
+# 场景：.dev-flow/sessions 是 symlink 指向外部目录。
+# runner 必须在安全前置检查阶段 fail closed，不创建任何临时文件到外部目录。
+craft_state fb22 "$ENV_FALLBACK" "$CONF"
+run_for fb22 read-rules >/dev/null
+
+# 创建外部目录，复制 state 文件
+EXTERNAL_SESSIONS22="$(/usr/bin/mktemp -d)"
+/bin/cp "$TMP_ROOT/.dev-flow/sessions/fb22.json" "$EXTERNAL_SESSIONS22/fb22.json"
+# 删除 sessions 目录，创建 symlink 指向外部目录
+/bin/rm -rf "$TMP_ROOT/.dev-flow/sessions"
+/bin/ln -s "$EXTERNAL_SESSIONS22" "$TMP_ROOT/.dev-flow/sessions"
+
+# 运行 runner — 应该拒绝
+if run_runner fb22 >/dev/null 2>&1; then
+  echo "FAIL: runner should reject sessions symlink to external dir" >&2
+  exit 1
+fi
+echo "OK: runner rejects sessions symlink to external dir"
+
+# 验证外部目录无临时文件（只有 state 文件 fb22.json）
+EXTERNAL_FILES22="$(/bin/ls -A "$EXTERNAL_SESSIONS22" 2>/dev/null)"
+for f in $EXTERNAL_FILES22; do
+  case "$f" in
+    fb22.json) ;;
+    *)
+      echo "FAIL: external directory polluted with temp file: $f" >&2
+      exit 1
+      ;;
+  esac
+done
+echo "OK: external directory stays clean (no temp files created through symlink)"
+
+# 清理：恢复 sessions 目录
+/bin/rm -f "$TMP_ROOT/.dev-flow/sessions"
+/bin/mkdir -p "$TMP_ROOT/.dev-flow/sessions"
+/bin/cp "$EXTERNAL_SESSIONS22/fb22.json" "$TMP_ROOT/.dev-flow/sessions/fb22.json"
+/bin/rm -rf "$EXTERNAL_SESSIONS22"
+
+# ---- 用例 23: sessions -> trusted root 内部目录 symlink → runner 拒绝 ----
+# 场景：.dev-flow/sessions 是 symlink 指向 .dev-flow/real-sessions（在 trusted root 内部）。
+# 即使指向内部，symlink 可被交换，runner 必须 fail closed。
+craft_state fb23 "$ENV_FALLBACK" "$CONF"
+run_for fb23 read-rules >/dev/null
+
+# 创建内部 real-sessions 目录，复制 state 文件
+/bin/mkdir -p "$TMP_ROOT/.dev-flow/real-sessions"
+/bin/cp "$TMP_ROOT/.dev-flow/sessions/fb23.json" "$TMP_ROOT/.dev-flow/real-sessions/fb23.json"
+# 删除 sessions 目录，创建 symlink 指向内部 real-sessions
+/bin/rm -rf "$TMP_ROOT/.dev-flow/sessions"
+/bin/ln -s "$TMP_ROOT/.dev-flow/real-sessions" "$TMP_ROOT/.dev-flow/sessions"
+
+# 运行 runner — 应该拒绝
+if run_runner fb23 >/dev/null 2>&1; then
+  echo "FAIL: runner should reject internal sessions symlink" >&2
+  exit 1
+fi
+echo "OK: runner rejects internal sessions symlink (-> trusted root internal dir)"
+
+# 验证 real-sessions 无临时文件
+REAL_FILES23="$(/bin/ls -A "$TMP_ROOT/.dev-flow/real-sessions" 2>/dev/null)"
+for f in $REAL_FILES23; do
+  case "$f" in
+    fb23.json) ;;
+    *)
+      echo "FAIL: internal real-sessions polluted with temp file: $f" >&2
+      exit 1
+      ;;
+  esac
+done
+echo "OK: internal real-sessions stays clean (no temp files created through symlink)"
+
+# 清理
+/bin/rm -f "$TMP_ROOT/.dev-flow/sessions"
+/bin/mkdir -p "$TMP_ROOT/.dev-flow/sessions"
+/bin/cp "$TMP_ROOT/.dev-flow/real-sessions/fb23.json" "$TMP_ROOT/.dev-flow/sessions/fb23.json"
+/bin/rm -rf "$TMP_ROOT/.dev-flow/real-sessions"
 
 echo "PASS: fallback runner issues token-bound packets, includes worktree diff, and record-gate enforces the three-piece binding"

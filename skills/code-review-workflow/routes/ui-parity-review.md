@@ -3,7 +3,7 @@
 ## Activation
 
 Use after `dev-flow ui_review` has produced **authorized source repairs** and needs an independent
-Review MCP check on the diff.
+审查角色 check on the diff.
 
 This route is **post-fix only**. It does **not** own whole-page Figma decomposition, live parity
 comparison, human authorization, source repair, on-device verification, or human repair acceptance.
@@ -21,9 +21,9 @@ Activate when **all** of the following are true:
 4. Every authorized id has `repair-plan.md` and `repair-verify.json`; accepted ids end `ok`, while
    reverted ids have a verified `revert-verify.json`.
 5. Human `repair-accepted.json` exists with no open rework.
-6. Parent `code-review-workflow` is invoking Review MCP / fallback.
+6. Parent `code-review-workflow` is invoking the resolver-selected adapter.
 
-If any precondition is missing, return `review-blocked` before MCP invocation. Do not re-run parity
+If any precondition is missing, return `review-blocked` before adapter invocation. Do not re-run parity
 or repair work from this route.
 
 ## Required evidence
@@ -84,7 +84,7 @@ Ask the independent reviewer to verify:
 - Changed code cannot be mapped to an authorized id.
 - Missing DebugBridge/runtime evidence for an accepted or reverted id.
 - `units_rework` is non-empty or acceptance sets do not exactly cover `units_to_fix`.
-- Review MCP timeout, missing run id, or non-pass without human risk acceptance
+- 审查角色 timeout, missing run id, or non-pass without human risk acceptance
 - Diff exceeds authorized ids or edits skipped/deferred/runtime-extra items without disposition.
 
 ## Pass conditions
@@ -111,6 +111,6 @@ reruns, and the three-round stop gate.
 | Owner | Owns |
 |---|---|
 | `ui-review` | Whole-page split, all-unit compare, runtime-extra scan, baseline, authorization, repair, live verify, human acceptance |
-| This route | Post-edit Review MCP packet + acceptance of authorized repair diffs |
-| `code-review-workflow` base | MCP health, packet transport, fallback, normalized handoff |
+| This route | Post-edit 审查角色 packet + acceptance of authorized repair diffs |
+| `code-review-workflow` base | Adapter health, packet transport, pre-dispatch fallback selection, post-dispatch fail-closed, normalized handoff |
 | `figma-ui-gates` | New-screen G0–G12 implementation (not this route) |

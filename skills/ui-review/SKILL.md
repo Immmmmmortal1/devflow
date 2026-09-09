@@ -30,7 +30,7 @@ Before Step 1, the dev-flow router owns:
 2. Do not configure repair-only gates yet. Step 2 is read-only and may conclude with no findings.
    If Step 3.1 produces a non-empty `units_to_fix`, then **before `confirm-plan`** configure:
 3. `confirm-plan` then `environment-health-check` — physical App launch preflight, DebugBridge,
-   Review MCP, and figma-rest-api must all be `available` (environment-health runs after
+   审查角色（@openai-reviewer）, and figma-rest-api must all be `available` (environment-health runs after
    confirm-plan; `ui-review` does not replace it with its own partial preflight. A read-only
    review that never edits source skips `confirm-plan` and may record a bounded read-only
    review result without environment-health)
@@ -44,7 +44,7 @@ rejects `confirm-plan` for `type=ui_review` unless both are required. A read-onl
 edits source does not call `confirm-plan`; it may record a bounded read-only review result and end
 without commit.
 
-`environment-health-check` already launches the current App and verifies Figma REST + Review MCP +
+`environment-health-check` already launches the current App and verifies Figma REST + 审查角色 +
 DebugBridge; re-verify/relaunch if a capability or App run becomes stale mid-flow.
 
 All JSON artifacts owned by this skill include:
@@ -115,8 +115,8 @@ Step 1 is a **hard gate**, not soft guidance. A stamped `detail-review.json`, a 
 4. Screen container classification (same intent as `figma-ui-gates` G4): from Figma structure decide
    whether the screen has list/repeated data, and record the **expected** `screen.base_layout`
    (`UICollectionView` vs adaptive `UIScrollView`) in `structure/screen-classification.json`.
-5. Structure Review MCP (same intent as G1 Review), including the screen classification. Write
-   `structure/structure-review.json` with real Review MCP evidence (`run_id`, `role=structure`,
+5. Structure 审查角色 (same intent as G1 Review), including the screen classification. Write
+   `structure/structure-review.json` with real 审查角色 evidence (`run_id`, `role=structure`,
    `verdict=pass`). Non-pass stops.
 6. Detail sweep (same as `figma-ui-gates` G2) — **recursive, structure order**:
    - process first-level Groups in Structure order
@@ -125,8 +125,8 @@ Step 1 is a **hard gate**, not soft guidance. A stamped `detail-review.json`, a 
      (`text` / `button-text` / `button-image` / `button-text-icon` / `image`) and record the full
      G2 decision fields in `detail.json` (see schema below)
    - non-minimum units keep splitting children until split-complete
-   - each detail gets Detail Review MCP **immediately**; write `detail-review.json` with real
-     Review MCP evidence (`run_id`, `role=detail`, `verdict=pass`); non-pass stops
+   - each detail gets Detail 审查角色 **immediately**; write `detail-review.json` with real
+     审查角色 evidence (`run_id`, `role=detail`, `verdict=pass`); non-pass stops
    - **do not** bind runtime, compare parity, edit source, or write `parity-result.*` in this step
 7. Whole-page complete when every first-level Group is split-complete → write
    `structure/structure-sweep-complete.json` and `structure/minimum-unit-index.json`.
@@ -140,11 +140,11 @@ Step 1 is a **hard gate**, not soft guidance. A stamped `detail-review.json`, a 
 manifest.json
 structure/frame_struct.md
 structure/frame_struct_index.json
-structure/structure-review.json       # Review MCP evidence required
+structure/structure-review.json       # 审查角色 evidence required
 structure/screen-classification.json
 structure/minimum-unit-index.json     # derived from reviewed details only
 groups/<node-id>/detail.json          # G2 decision fields per minimum unit
-groups/<node-id>/detail-review.json   # Review MCP evidence required
+groups/<node-id>/detail-review.json   # 审查角色 evidence required
 structure/structure-sweep-complete.json
 ```
 
@@ -176,7 +176,7 @@ Hard consistency rules (enforced by validator):
 - When `figma/root.depth4.json` (or `figma/root.json`) exists, an `image` unit with
   `asset_collapse_eligible=true` that has TEXT descendants in the dump fails split
 
-### Review MCP evidence schema
+### 审查角色 evidence schema
 
 `structure/structure-review.json` and each `groups/<id>/detail-review.json` must include:
 
@@ -191,11 +191,11 @@ reviewed_at: <ISO-8601 timestamp>
 Optional when present on the handoff: `provider`, `model`. A file with only `status: pass` and no
 `run_id` is invalid.
 
-### Review MCP scope in Step 1
+### 审查角色 scope in Step 1
 
-- **Structure Review MCP** — root identity, direct-child completeness, parent/child preservation,
+- **Structure 审查角色** — root identity, direct-child completeness, parent/child preservation,
   visual order, original coordinates, and the **expected `screen.base_layout`** decision.
-- **Detail Review MCP** (per Group) — minimum-unit decision, asset-collapse eligibility, and the
+- **Detail 审查角色** (per Group) — minimum-unit decision, asset-collapse eligibility, and the
   **`unit_kind` classification** (e.g. a text+icon button must not be labelled `image`; a
   localizable text node must not be `image`). A wrong `unit_kind` is a non-pass.
 
@@ -218,8 +218,8 @@ Optional when present on the handoff: `provider`, `model`. A file with only `sta
 ### Step 1 pass
 
 ```text
-Structure Review MCP = pass (structure-review.json has run_id + verdict)
-Every Group Detail Review MCP = pass (detail-review.json has run_id + verdict)
+Structure 审查角色 = pass (structure-review.json has run_id + verdict)
+Every Group Detail 审查角色 = pass (detail-review.json has run_id + verdict)
 Every minimum unit has reviewed G2 decision fields + unit_kind
 minimum-unit-index.json exactly equals reviewed detail.minimum_units
 screen-classification.json (expected base_layout) written
@@ -817,4 +817,4 @@ handoff.
 | `ui-review` | Step 1–6 (split, compare/extras, baseline, repair, live verify, acceptance, post-review, gates) |
 | `code-grounded` / `confirm-gate` | Scope/evidence discipline and first-edit confirmation |
 | `figma-ui-gates` | New-screen G0–G12; **split rule source** for Step 1 |
-| `ui-parity-review` route | Post-fix Review MCP on authorized diffs only |
+| `ui-parity-review` route | Post-fix 审查角色 on authorized diffs only |

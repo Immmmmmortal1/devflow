@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# record-app-launch-report.sh v2 测试：schema_version=2 + build_run_action/result + device_transport 交叉校验
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -26,8 +27,9 @@ import json, sys
 from pathlib import Path
 path, build_id, device_id = sys.argv[1], sys.argv[2], sys.argv[3]
 payload = {
-    "producer": "XcodeBuildMCP", "schema_version": 1, "session_id": "record-test",
-    "status": "available", "build_run_device": "success",
+    "producer": "XcodeBuildMCP", "schema_version": 2, "session_id": "record-test",
+    "status": "available", "build_run_action": "build_run_device",
+    "build_run_result": "success",
     "device_transport": "wired", "app_launched": True,
     "build_id": build_id,
 }
@@ -48,8 +50,9 @@ fi
 import json, sys
 from pathlib import Path
 Path(sys.argv[1]).write_text(json.dumps({
-    "producer": "XcodeBuildMCP", "schema_version": 1, "session_id": "record-test",
-    "status": "available", "build_run_device": "success",
+    "producer": "XcodeBuildMCP", "schema_version": 2, "session_id": "record-test",
+    "status": "available", "build_run_action": "build_run_device",
+    "build_run_result": "success",
     "device_transport": "wired", "app_launched": True,
     "device_id": "00008110-001A1B2C3D4E5",
 }) + "\n")
@@ -84,8 +87,9 @@ run_record record --report "$TMP_ROOT/valid.json" >/dev/null
 import json, sys
 from pathlib import Path
 Path(sys.argv[1]).write_text(json.dumps({
-    "producer": "XcodeBuildMCP", "schema_version": 1, "session_id": "other-session",
-    "status": "available", "build_run_device": "success",
+    "producer": "XcodeBuildMCP", "schema_version": 2, "session_id": "other-session",
+    "status": "available", "build_run_action": "build_run_device",
+    "build_run_result": "success",
     "device_transport": "wired", "app_launched": True,
     "build_id": "build-1", "device_id": "device-1",
 }) + "\n")
@@ -117,26 +121,28 @@ if run_record record < "$TMP_ROOT/valid.json" >/dev/null 2>&1; then
   exit 1
 fi
 
-# 10. device_transport=simulator 合法 payload → exit 0（模拟器是合法显式目标）
+# 10. device_transport=simulator + build_run_sim → exit 0（v2 交叉匹配：sim↔simulator）
 /usr/bin/python3 - "$TMP_ROOT/sim-valid.json" <<'PY'
 import json, sys
 from pathlib import Path
 Path(sys.argv[1]).write_text(json.dumps({
-    "producer": "XcodeBuildMCP", "schema_version": 1, "session_id": "record-test",
-    "status": "available", "build_run_device": "success",
+    "producer": "XcodeBuildMCP", "schema_version": 2, "session_id": "record-test",
+    "status": "available", "build_run_action": "build_run_sim",
+    "build_run_result": "success",
     "device_transport": "simulator", "app_launched": True,
     "build_id": "build-sim-1", "device_id": "sim-udid-1",
 }) + "\n")
 PY
 run_record record --report "$TMP_ROOT/sim-valid.json" >/dev/null
 
-# 11. device_transport=invalid → exit 非零（非法 transport 被拒）
+# 11. device_transport=bluetooth → exit 非零（v2 交叉校验：device→wired，bluetooth 不匹配）
 /usr/bin/python3 - "$TMP_ROOT/bad-transport.json" <<'PY'
 import json, sys
 from pathlib import Path
 Path(sys.argv[1]).write_text(json.dumps({
-    "producer": "XcodeBuildMCP", "schema_version": 1, "session_id": "record-test",
-    "status": "available", "build_run_device": "success",
+    "producer": "XcodeBuildMCP", "schema_version": 2, "session_id": "record-test",
+    "status": "available", "build_run_action": "build_run_device",
+    "build_run_result": "success",
     "device_transport": "bluetooth", "app_launched": True,
     "build_id": "build-bad-1", "device_id": "device-bad-1",
 }) + "\n")
@@ -146,13 +152,14 @@ if run_record record --report "$TMP_ROOT/bad-transport.json" >/dev/null 2>&1; th
   exit 1
 fi
 
-# 12. 缺 device_transport → exit 非零（transport 必须显式）
+# 12. 缺 device_transport → exit 非零（v2：action=device 要求 transport=wired）
 /usr/bin/python3 - "$TMP_ROOT/no-transport.json" <<'PY'
 import json, sys
 from pathlib import Path
 Path(sys.argv[1]).write_text(json.dumps({
-    "producer": "XcodeBuildMCP", "schema_version": 1, "session_id": "record-test",
-    "status": "available", "build_run_device": "success",
+    "producer": "XcodeBuildMCP", "schema_version": 2, "session_id": "record-test",
+    "status": "available", "build_run_action": "build_run_device",
+    "build_run_result": "success",
     "app_launched": True,
     "build_id": "build-notrans-1", "device_id": "device-notrans-1",
 }) + "\n")
@@ -162,4 +169,20 @@ if run_record record --report "$TMP_ROOT/no-transport.json" >/dev/null 2>&1; the
   exit 1
 fi
 
-echo "PASS: record-app-launch-report.sh enforces --report, build_id/device_id non-placeholder, device_transport wired|simulator, and reads --report - from stdin (direct + dev-flow wrapper)"
+# 13. v1 schema_version=1 → exit 非零（旧 schema 被拒绝）
+/usr/bin/python3 - "$TMP_ROOT/v1-schema.json" <<'PY'
+import json, sys
+from pathlib import Path
+Path(sys.argv[1]).write_text(json.dumps({
+    "producer": "XcodeBuildMCP", "schema_version": 1, "session_id": "record-test",
+    "status": "available", "build_run_device": "success",
+    "device_transport": "wired", "app_launched": True,
+    "build_id": "build-v1-1", "device_id": "device-v1-1",
+}) + "\n")
+PY
+if run_record record --report "$TMP_ROOT/v1-schema.json" >/dev/null 2>&1; then
+  echo "FAIL: v1 schema_version=1 report should be rejected" >&2
+  exit 1
+fi
+
+echo "PASS: record-app-launch-report.sh v2 (schema_version=2, build_run_action/result, device_transport cross-match, v1 rejected)"

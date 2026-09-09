@@ -78,21 +78,25 @@ def non_placeholder(value):
 
 required = {
     "producer": "XcodeBuildMCP",
-    "schema_version": 1,
+    "schema_version": 2,
     "session_id": session_id,
     "status": "available",
-    "build_run_device": "success",
+    "build_run_result": "success",
     "app_launched": True,
 }
 errors = []
 for key, expected in required.items():
     if payload.get(key) != expected:
         errors.append(key)
-# device_transport 接受 wired（有线物理真机）或 simulator（显式指定的 iOS 模拟器）；
-# 其他值一律视为非法，防止伪造或未确认的目标降级。
-transport = payload.get("device_transport")
-if transport not in ("wired", "simulator"):
-    errors.append("device_transport")
+# build_run_action 必须是真实 XcodeBuildMCP 动作之一；
+# device_transport 必须与 action 交叉一致（不可伪造 simulator 为 build_run_device）。
+action = payload.get("build_run_action")
+if action not in ("build_run_device", "build_run_sim"):
+    errors.append("build_run_action")
+else:
+    expected_transport = "wired" if action == "build_run_device" else "simulator"
+    if payload.get("device_transport") != expected_transport:
+        errors.append("device_transport")
 for key in ("build_id", "device_id"):
     if not non_placeholder(payload.get(key)):
         errors.append(key)
@@ -127,11 +131,12 @@ Required order:
 
 Required report fields:
   producer=XcodeBuildMCP
-  schema_version=1
+  schema_version=2
   session_id=$SESSION_ID
   status=available
-  build_run_device=success
-  device_transport=wired|simulator (reflects the actual target used)
+  build_run_action=build_run_device|build_run_sim (reflects the actual target used)
+  build_run_result=success
+  device_transport=wired|simulator (must cross-match: build_run_device↔wired, build_run_sim↔simulator)
   app_launched=true
   build_id=<real non-placeholder build id>
   device_id=<real non-placeholder device id (physical UDID or Simulator id)>
@@ -146,10 +151,11 @@ import sys
 session_id = sys.argv[1]
 print(json.dumps({
     "producer": "XcodeBuildMCP",
-    "schema_version": 1,
+    "schema_version": 2,
     "session_id": session_id,
     "status": "available",
-    "build_run_device": "success",
+    "build_run_action": "build_run_device",
+    "build_run_result": "success",
     "device_transport": "wired",
     "app_launched": True,
     "build_id": "<real-build-id-from-XcodeBuildMCP>",

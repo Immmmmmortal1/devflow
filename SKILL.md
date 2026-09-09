@@ -51,38 +51,56 @@ failure must be reported as a blocker and must not silently fall back to the oth
 to a different device. A Simulator is a valid target only when explicitly chosen up front; it must
 never be used as an unconfirmed fallback after a physical-device failure, and vice versa.
 
-0. Expose the deferred XcodeBuildMCP tools first with
-   `tool_search("XcodeBuildMCP session_set_defaults session_show_defaults build_run_device device iOS")`.
-   This must surface the actual `session_set_defaults`, `session_show_defaults`, and
-   `build_run_device` tools in the callable tool list. If tool discovery fails or only unrelated
-   tools are exposed, stop and report that XcodeBuildMCP was not callable in the current agent
-   turn. Do not continue with shell commands, placeholder function names, or guessed namespaces.
+Xcode target resolution. Before calling `session_set_defaults`, resolve the project target from
+`<app-root>/.xcodebuildmcp/config.yaml` (the single source of truth that XcodeBuildMCP 2.x itself
+reads at MCP startup). Run `bash /path/to/devflow/scripts/dev-flow.sh xcode-target` to parse
+`sessionDefaults`, resolve relative paths, validate required fields, and output bounded JSON
+fields for `session_set_defaults`. The resolver never auto-scans for devices; if the config is
+missing, a required field is absent, or the project path does not match the app root, it reports
+`blocked` with the exact reason — the agent must then ask the user or explicitly discover a
+target. Only when the resolver is `blocked`, the config is stale, or the user explicitly switches
+targets should the agent discover or ask for a device. Do not read `~/.xcodebuildmcp/config.yaml`
+as a project truth source.
+
+0. Expose the deferred XcodeBuildMCP tools first. Use the resolver's `launch_action` to pick the
+   right tool_search query:
+   - physical target (`target_kind=physical`, `launch_action=build_run_device`):
+     `tool_search("XcodeBuildMCP session_set_defaults session_show_defaults build_run_device device iOS")`
+   - simulator target (`target_kind=simulator`, `launch_action=build_run_sim`):
+     `tool_search("XcodeBuildMCP session_set_defaults session_show_defaults build_run_sim simulator iOS")`
+   This must surface the actual `session_set_defaults`, `session_show_defaults`, and the matching
+   `build_run_device`/`build_run_sim` tool in the callable tool list. If tool discovery fails or
+   only unrelated tools are exposed, stop and report that XcodeBuildMCP was not callable in the
+   current agent turn. Do not continue with shell commands, placeholder function names, or guessed
+   namespaces.
 1. Call the exposed XcodeBuildMCP `session_set_defaults` to isolate/seed the active profile for
    this worktree before reading or building. Pass `profile=<current session id>`
    (`DEV_FLOW_SESSION_ID`, then `CODEX_THREAD_ID`, then `CURSOR_CONVERSATION_ID`; never `local`
-   inside Cursor) and `createIfNotExists=true`, and set the project target fields:
-   `workspacePath` (`.xcworkspace` for CocoaPods projects), `scheme`, `configuration`, `platform`,
-   and the explicit `deviceId` (physical UDID or Simulator id) chosen for this session. If any
-   target field is genuinely unknown, stop and ask the user/project rules to provide it; do not
-   guess. An active profile that is initially empty is not, by itself, a stop condition, because
-   `session_set_defaults` is the legitimate action that fills it.
+   inside Cursor) and `createIfNotExists=true`, and set the project target fields from the
+   resolver's `profile` output: `workspacePath` (`.xcworkspace` for CocoaPods projects) or
+   `projectPath`, `scheme`, `configuration`, `platform`, and the explicit `deviceId`/`simulatorId`
+   chosen for this session. If the resolver is `blocked`, ask the user or explicitly discover a
+   target; do not auto-scan. An active profile that is initially empty is not, by itself, a stop
+   condition, because `session_set_defaults` is the legitimate action that fills it.
 2. Call the exposed XcodeBuildMCP `session_show_defaults` to read back the active profile and
    verify it before the first build/run/test call in the session.
 3. Verify the active profile, not a guessed path. The profile must contain the intended
-   `workspacePath`, `scheme`, `configuration`, `platform`, and the `deviceId` of the chosen target
-   (physical UDID or Simulator id).
+   `workspacePath`/`projectPath`, `scheme`, `configuration`, `platform`, and the `deviceId`/
+   `simulatorId` of the chosen target.
 4. For CocoaPods projects, `workspacePath` must point to the `.xcworkspace`; never use the sibling
    `.xcodeproj` for build, install, launch, DebugBridge bootstrap, or runtime verification.
 5. If the active profile is missing required target fields after `session_set_defaults`, stale,
-   uses the wrong workspace/project, has no `deviceId`, or points to `.xcodeproj` for a CocoaPods
-   app, stop immediately and report the exact profile field that must be fixed. Do not keep trying
-   alternative paths, do not run a shell `xcodebuild`, and do not silently switch to the other
-   target kind or a different device as a workaround.
-6. After the profile is verified, call the exposed XcodeBuildMCP `build_run_device` for launch on
-   the chosen target. Pass `env.DEV_FLOW_SESSION_ID=<current session id>` to the launched app. Do
-   not call `build_device`, `install_app_device`, or `launch_app_device` separately unless
-   `build_run_device` is unavailable in the actual exposed XcodeBuildMCP tool list and that blocker
-   is reported first.
+   uses the wrong workspace/project, has no `deviceId`/`simulatorId`, or points to `.xcodeproj`
+   for a CocoaPods app, stop immediately and report the exact profile field that must be fixed.
+   Do not keep trying alternative paths, do not run a shell `xcodebuild`, and do not silently
+   switch to the other target kind or a different device as a workaround.
+6. After the profile is verified, call the exposed XcodeBuildMCP launch action matching the
+   resolver's `launch_action`: `build_run_device` for a physical device (`target_kind=physical`),
+   or `build_run_sim` for a Simulator (`target_kind=simulator`). Pass
+   `env.DEV_FLOW_SESSION_ID=<current session id>` to the launched app. Do not call
+   `build_device`/`install_app_device`/`launch_app_device` or `build_sim`/`install_app_sim`/
+   `launch_app_sim` separately unless the combined `build_run_*` action is unavailable in the
+   actual exposed XcodeBuildMCP tool list and that blocker is reported first.
 
 If a flow rule, script, or project profile appears wrong, dev-flow must raise the process problem to
 the user instead of silently attempting a workaround that wastes time or produces invalid evidence.
@@ -117,7 +135,7 @@ bash scripts/install-dev-flow.sh --project <ios-app-root>
 | Route / condition | Required skill | Owns |
 |---|---|---|
 | Every task | `code-grounded` | evidence, scope, classification |
-| Post-confirm gate before implementation / commit flow | `environment-health-check` | App launch preflight on the chosen target plus DebugBridge, Review MCP, and `figma-rest-api` availability, trimmed by session level |
+| Post-confirm gate before implementation / commit flow | `environment-health-check` | App launch preflight on the chosen target plus DebugBridge, 审查角色（@openai-reviewer）, and `figma-rest-api` availability; required capabilities derived from `required_gates` |
 | `feature` | `feature-workflow` | feature analysis and execution plan |
 | `bug` | `bug-workflow` | bug analysis and repair plan |
 | Stateful behavior | `requirements-closure` | closed state chain and requirements artifact |
@@ -125,9 +143,9 @@ bash scripts/install-dev-flow.sh --project <ios-app-root>
 | API-driven behavior | `api-contract` | field → business state → UI mapping |
 | New Figma UI in `feature` | `figma-ui-gates` | Figma decomposition and G0–G12 implementation gates |
 | Existing UI parity | `ui-review` | Whole-page G2-equivalent split hard gate (`--stage split`) → all-unit live compare → baseline → human-authorized repair → live re-verify → acceptance |
-| After `ui_review` source repairs | `code-review-workflow` → `ui-parity-review` | post-fix Review MCP on authorized diffs only |
+| After `ui_review` source repairs | `code-review-workflow` → `ui-parity-review` | post-fix 审查角色 review on authorized diffs only |
 | Real-device validation | `runtime-debug-workflow` | XcodeBuildMCP, DebugBridge, logs, runtime evidence |
-| Review after source edits | `code-review-workflow` + selected route | Review MCP base capability and review criteria |
+| Review after source edits | `code-review-workflow` + selected route | 审查角色 base capability and review criteria |
 | Bug historical check | `zentao-bug-gate` when required | ZenTao id and resolution |
 | Before commit | `commit-gate` | commit authorization and scope |
 
@@ -150,7 +168,7 @@ Task level (`--level`, only meaningful for `start`):
 - `standard` — 默认；环境门要求 `app_launch` + `review_mcp`。
 - `heavy` — 新 Figma UI / `ui_review`；环境门全 4 项（`app_launch`、`debugbridge`、`review_mcp`、`figma_rest_api`）。
 
-环境健康检查按会话 level 只执行必需探针，非必需项在报告中标记为 `not-required` 且不参与最终 `available` 判定。
+环境健康检查的必需能力从会话的 `required_gates` 派生（`review` 恒必需），非必需项在报告中标记为 `not-required` 且不参与最终 `available` 判定。
 
 双层规则机制（不依赖 AI 记忆，门禁脚本强制执行）：
 
@@ -293,17 +311,23 @@ every project automatically without per-app script copies.
 The command writes the results into `.dev-flow/sessions/<session-id>.json`. It exits non-zero
 when any required capability is unavailable.
 
-Required checks depend on the session level (`--level`, default `standard`):
+required capabilities are derived from the session's `required_gates` (not the session level):
 
-- `trivial` — `review_mcp` only;
-- `standard` — `app_launch` + `review_mcp`;
-- `heavy` — all four (`app_launch`, `debugbridge`, `review_mcp`, `figma_rest_api`).
+| gate | required capabilities |
+|---|---|
+| `review` | `review_mcp` |
+| `runtime` | `app_launch`, `debugbridge` |
+| `figma_ui` | `app_launch`, `debugbridge`, `figma_rest_api` |
+| `ui_parity` | `app_launch`, `debugbridge`, `figma_rest_api` |
 
-Non-required checks are recorded as `not-required` and do not affect the final status. If any
-required result is `blocked` or `not-run`, stop before implementation, gate recording, commit
-approval, commit, or TestFlight, and report the exact environment blocker. Do not use a
-route-specific fallback to bypass this gate, except the built-in Review MCP → `gstack-review`
-(`/review`) fallback recorded by `scripts/review-health-probe.sh`.
+`review` is always required. non-required capabilities are recorded as `not-required` and do
+not participate in the overall status. Pure dev-flow / script / documentation tasks that do not
+touch App, Figma, or DebugBridge require only `review` and do not need App launch, DebugBridge,
+or `figma-rest-api`. If any required result is `blocked` or `not-run`, stop before
+implementation, gate recording, commit approval, commit, or TestFlight, and report the exact
+environment blocker. Do not use a route-specific fallback to bypass this gate, except the
+built-in 审查角色 → `gstack-review` (`/review`) fallback recorded by
+`scripts/review-health-probe.sh`.
 
 ### 6. Implement or review
 
@@ -311,7 +335,7 @@ route-specific fallback to bypass this gate, except the built-in Review MCP → 
   `figma-ui-gates` now and complete its G0–G12 contract.
 - `bug`: implement only the approved repair plan.
 - `ui_review`: read `ui-review` and execute its pipeline in this order: Step1 whole-page
-  **G2-equivalent hard gate** (recursive detail + real Review MCP evidence; pass
+  **G2-equivalent hard gate** (recursive detail + real 审查角色 evidence; pass
   `validate-ui-review-artifacts --stage split`; do not hardcode the unit index or bundle
   parity writes) → only then live-compare **every minimum unit** → freeze the baseline → obtain
   workspace-level `parity-confirmed.json` → repair authorized units one at a time with live
@@ -339,12 +363,14 @@ instead.
 ### 7. Review source changes
 
 After source edits, read `code-review-workflow` and select a route from `routes/index.md`. The base
-skill owns Review MCP health, compact packet construction, MCP invocation, and bounded
-`gstack-review` fallback. When the session is in fallback mode (environment evidence
-`fallback=gstack-review`), run `bash scripts/run-review-fallback.sh` and review **yourself** per the
-injected gstack workflow — never a sub-agent; the report must set `review_path=fallback` or
-`record-gate` rejects it. The selected route owns review criteria, finding decisions, validation,
-and the final `pass`, `blocked`, or revise result.
+skill owns 审查角色（@openai-reviewer）availability, compact packet construction, reviewer dispatch,
+and pre-dispatch `gstack-review` fallback selection. When the session is in fallback mode
+(environment evidence `fallback=gstack-review`), run `bash scripts/run-review-fallback.sh` and
+review **yourself** per the injected gstack workflow — never a sub-agent; the report must set
+`review_path=fallback` or `record-gate` rejects it. Post-dispatch fallback switching is prohibited:
+once dispatch has begun, `timeout`/`missing`/`error`/`blocked`/`revise` must be recorded as-is
+and the review stops — never switch to a different adapter. The selected route owns review
+criteria, finding decisions, validation, and the final `pass`, `blocked`, or revise result.
 
 Only route `pass`, or residual risk explicitly accepted by the user and recorded by the route, may
 continue. Timeout, missing result, or `blocked` is not a pass.
@@ -407,9 +433,14 @@ dev-flow v1 不侵入项目版本结构。
 ## Hard rules
 
 1. No source edits before `confirm-gate` and `confirm-plan`.
-2. Every first-class route must pass `environment-health-check` (per its session level's required checks) after `confirm-plan` and before implementation, gate recording, commit approval, commit, or TestFlight.
+2. Every first-class route must pass `environment-health-check` after `confirm-plan` and before
+   implementation, gate recording, commit approval, commit, or TestFlight. Required capabilities
+   are derived from the session's `required_gates`; non-required capabilities are `not-required`
+   and do not participate in the overall status. `review` is always required; pure dev-flow /
+   script / documentation tasks require only `review` and do not need App launch, DebugBridge, or
+   Figma.
 3. A blocked or unrun environment check cannot be bypassed by selecting another route or fallback,
-   except Review MCP health may fall back to `gstack-review` (`/review`) through
+   except 审查角色 health may fall back to `gstack-review` (`/review`) through
    `scripts/review-health-probe.sh`.
 4. No coding while the requirements artifact is `draft`, `pending-human-approval`, or `blocked`.
 5. The approved requirements chain is authoritative; code, fallback, tests, and review cannot
@@ -449,7 +480,7 @@ classify
 → feature | bug | ui_review
 → requirements-closure? → localization-workflow? → api-contract? → zentao-bug-gate?
 → confirm-gate (required before first source edit)
-→ environment-health-check [required checks per session level: trivial=review_mcp / standard=app_launch+review_mcp / heavy=all four]
+→ environment-health-check [required capabilities available; non-required = not-required]
 → feature: figma-ui-gates? → implement
 → bug: implement repair
 → ui_review: G2-equivalent split hard gate → all-unit live compare → baseline → authorize → per-unit repair

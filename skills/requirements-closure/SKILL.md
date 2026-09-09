@@ -132,7 +132,7 @@ Approved artifact: <path>
 After explicit approval, update the same artifact to `status: approved`, sync its `logic_id` and
 routing keys into `index.json`, and pass the artifact to `confirm-gate`. When source changes are
 later reviewed, select the `requirements-chain-review` route from `code-review-workflow` and hand
-it this approved artifact; do not embed Review MCP health or packet construction here. If evidence
+it this approved artifact; do not embed 审查角色 health or packet construction here. If evidence
 is missing or contradictory, use `blocked` and name the exact next read or decision.
 
 ## Artifact contract

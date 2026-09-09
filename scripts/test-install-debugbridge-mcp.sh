@@ -6,6 +6,9 @@ TMP_PROJECT="$(/usr/bin/mktemp -d)"
 TMP_MCP_CONFIG="$(/usr/bin/mktemp)"
 trap '/bin/rm -rf -- "$TMP_PROJECT" "$TMP_MCP_CONFIG"' EXIT
 
+# safe_write_external 默认 trusted_external_root=HOME；测试用 tmpdir 需显式指定
+export DEV_FLOW_TRUSTED_EXTERNAL_ROOT="$(dirname "$TMP_MCP_CONFIG")"
+
 mkdir -p "$TMP_PROJECT"
 cat >"$TMP_PROJECT/Podfile" <<'RUBY'
 platform :ios, '15.0'

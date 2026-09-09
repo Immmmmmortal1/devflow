@@ -238,7 +238,7 @@ expect_fail() {
 /bin/cp "$WORKSPACE/groups/g2/detail.json" "$TMP_ROOT/detail-g2.valid.json"
 /bin/cp "$WORKSPACE/structure/structure-review.json" "$TMP_ROOT/structure-review.valid.json"
 
-# Stamped detail-review without Review MCP run_id cannot pass split.
+# Stamped detail-review without 审查角色 run_id cannot pass split.
 /usr/bin/python3 - "$WORKSPACE/groups/g1/detail-review.json" <<'PY'
 import json, sys
 from pathlib import Path

@@ -31,6 +31,12 @@ dev_flow_load_paths() {
   DEV_FLOW_PROJECT_ROOT="$(resolve_dev_flow_project_root)"
   DEV_FLOW_STATE_DIR="$DEV_FLOW_PROJECT_ROOT/.dev-flow/sessions"
 
+  # export DEV_FLOW_PROJECT_ROOT so child processes (Python resolver, probe subshells)
+  # can read it from os.environ. Without this, review_backend_resolver.py falls back
+  # to default policy when invoked as a subprocess, even though the parent shell
+  # resolved the project root correctly from cwd.
+  export DEV_FLOW_PROJECT_ROOT
+
   # Back-compat names used across gate scripts.
   ROOT="$DEV_FLOW_PROJECT_ROOT"
   SOURCE_ROOT="$DEV_FLOW_SOURCE_ROOT"

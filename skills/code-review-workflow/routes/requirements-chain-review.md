@@ -50,4 +50,4 @@ Requirements-chain instructions:
 - the artifact remained unchanged during the review.
 
 An MCP response or successful build alone cannot produce `pass`. Return `pass`, `revise`, or
-`blocked` and preserve deterministic checks separately from Review MCP findings.
+`blocked` and preserve deterministic checks separately from 审查角色 findings.

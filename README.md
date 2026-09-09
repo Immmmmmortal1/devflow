@@ -14,13 +14,14 @@ bash scripts/install-dev-flow.sh --project /path/to/YourApp
 
 安装器会同时完成：
 
-1. **dev-flow skills** → 链到 `~/.cursor/skills` 或 `~/.codex/skills`
-2. **[XcodeBuildMCP](https://github.com/getsentry/XcodeBuildMCP)** → 写入 Cursor/Codex MCP 配置，启用 `device` / `session-management` / `project-discovery`；有 `--project` 时还会写 `<app>/.xcodebuildmcp/config.yaml`
-3. **[UI-dbugbridge-mcp](https://github.com/Immmmmmortal1/UI-dbugbridge-mcp)** → Mac 侧 DebugBridge MCP（克隆/更新、`npm run build`、写入 Cursor/Codex MCP 配置）
-4. **Review 后端（交互选择）** → `orchestrator-mcp` 或 `gstack-review`
+1. **dev-flow skills** → 链到 `~/.cursor/skills`、`~/.codex/skills` 或 `~/.config/opencode/skills`
+2. **[XcodeBuildMCP](https://github.com/getsentry/XcodeBuildMCP)** → 写入 Cursor/Codex MCP 配置，启用 `device` / `session-management` / `project-discovery`；有 `--project` 时还会写 `<app>/.xcodebuildmcp/config.yaml`。opencode 模式跳过 host MCP config 合并（opencode 自行管理），仍写项目 profile
+3. **[UI-dbugbridge-mcp](https://github.com/Immmmmmortal1/UI-dbugbridge-mcp)** → Mac 侧 DebugBridge MCP（克隆/更新、`npm run build`、写入 Cursor/Codex MCP 配置）。opencode 模式跳过 host MCP config 合并，检查 opencode config 是否已配置 `ui_dbugbridge_mcp`，仍安装 app binding（Pod + manifest）
+4. **Review 后端（交互选择）** → 审查角色（@openai-reviewer）、`orchestrator-mcp` 或 `gstack-review`
+   - **审查角色（@openai-reviewer）**：opencode subagent，model=openrouter/openai/gpt-5.5（默认项）
    - **orchestrator-mcp**：[`Immmmmmortal1/orchestrator-mcp`](https://github.com/Immmmmmortal1/orchestrator-mcp)（独立 Review Hub MCP，需配置 API Key）
-   - **gstack-review**：未安装时自动 shallow clone gstack 的 `/review` skill（非交互默认项）
-5. **App 绑定** → 仅写 `<app>/.dev-flow/`（含 `xcodebuild-mcp-install.json`、`debugbridge-install.json`、`review-backend.json`、Pod 引导 manifest）
+   - **gstack-review**：未安装时自动 shallow clone gstack 的 `/review` skill
+5. **App 绑定** → 仅写 `<app>/.dev-flow/`（含 `xcodebuild-mcp-install.json`、`debugbridge-install.json`、`review-backend.local.json`（v2）、Pod 引导 manifest）。所有状态写入使用统一 `atomic_json_write` safe 函数（symlink 拒绝、trusted-root 边界、原子写入）
 6. **LookDebugBridge Pod**（有 Podfile 时）→ 自动写入 Debug-only pod 行；**AI 仍需** `pod install` 并在 Debug 启动代码里加入 bootstrap snippet
 
 - `--project`：iOS App 工程根目录（含 `.xcodeproj` / `.xcworkspace` 的那一层）
@@ -29,19 +30,19 @@ bash scripts/install-dev-flow.sh --project /path/to/YourApp
 - 跳过 XcodeBuildMCP：`--skip-xcodebuild`
 - 跳过 DebugBridge MCP：`--skip-debugbridge`
 - 跳过 Review 安装：`--skip-review`
-- 非交互指定 Review 后端：`--review-backend orchestrator|gstack`（默认 gstack）
+- 非交互指定 Review 后端：`--review-backend agent/openai-reviewer|mcp/orchestrator|skill/gstack`（或 v1 别名 `reviewer|orchestrator|gstack`）。非交互且无 CLI/env/已有配置时 fail closed——不静默用默认策略
 - 自动跑 `pod install`：`--run-pod-install`（需本机已装 CocoaPods）
-- 强制平台：`--cursor` 或 `--codex`（默认自动检测）
+- 强制平台：`--cursor`、`--codex` 或 `--opencode`（默认自动检测）
 
 **AI agent 安装规则：**
 
 1. 先 `git pull` devflow，再跑 `install-dev-flow.sh`，不要手抄 gate 脚本到 App 仓
 2. App 仓只会多出 `.dev-flow/`（会话状态 + `source-root` + DebugBridge / Review manifest）
-3. 安装时会提示选择 Review 后端；AI 可用 `--review-backend orchestrator` 或 `--review-backend gstack`
+3. 安装时会提示选择 Review 后端；AI 可用 `--review-backend agent/openai-reviewer`、`--review-backend mcp/orchestrator` 或 `--review-backend skill/gstack`（或 v1 别名 `reviewer`/`orchestrator`/`gstack`）。非交互无配置时 fail closed
 4. 若 `.dev-flow/debugbridge-install.json` 显示 `pod_changed: true`：在 App 仓执行 `pod install`，并把 `.dev-flow/debugbridge-app-bootstrap.swift.snippet` 加到 Debug 启动路径（如 `AppDelegate` / `@main` App）
-5. 重启 Cursor/Codex MCP，使 `XcodeBuildMCP` / `ui_dbugbridge_mcp` / `orchestrator_mcp` 生效
+5. 重启 Cursor/Codex/opencode MCP，使 `XcodeBuildMCP` / `ui_dbugbridge_mcp` / `orchestrator_mcp` 生效
 6. 装完后在 App 根目录跑：`bash /path/to/devflow/scripts/dev-flow.sh doctor`
-7. 环境门禁（confirm-plan 之后、实现之前）：`tool_search` → `session_set_defaults` → `session_show_defaults` → `build_run_device`（选定目标：有线真机或显式指定的模拟器）→ `dev-flow.sh app-launch record --report <bounded-xcodebuildmcp-json|->` → `dev-flow.sh environment-health run`
+7. 环境门禁（confirm-plan 之后、实现之前）：先用 `dev-flow.sh xcode-target` 解析 `.xcodebuildmcp/config.yaml` 目标 → `tool_search`（`build_run_device` 或 `build_run_sim` 依目标）→ `session_set_defaults` → `session_show_defaults` → `build_run_device`/`build_run_sim`（选定目标：有线真机或显式指定的模拟器）→ `dev-flow.sh app-launch record --report <bounded-xcodebuildmcp-json|->` → `dev-flow.sh environment-health run`
 8. Figma token 用 `FIGMA_REST_TOKEN` 或 `FIGMA_ACCESS_TOKEN`
 
 安装完成后日常命令（在 App 根目录）：
@@ -57,19 +58,28 @@ bash /path/to/devflow/scripts/dev-flow.sh app-launch record --report <bounded-xc
 bash /path/to/devflow/scripts/dev-flow.sh environment-health run
 ```
 
-## 任务复杂度分级（--level）
+## 能力模型（required_gates）
 
-`session start` 支持 `--level trivial|standard|heavy`（默认 `standard`），决定环境门必需的检查项：
+环境门禁的必需能力从会话的 `required_gates` 派生，不再按 `--level` 裁剪：
 
-| level | 适用场景 | 环境门必需项 | 门禁限制 |
-|---|---|---|---|
-| `trivial` | 文案 / typo / 纯逻辑微调 | 仅 `review_mcp` | 仅 `review` 门；`configure-gates` 禁止加 `runtime`/`figma_ui`/`ui_parity` |
-| `standard` | 普通 feature / bug | `app_launch` + `review_mcp` | 无 |
-| `heavy` | 新 Figma UI / `ui_review` | 全 4 项 | 无 |
+| gate | 必需能力 |
+|---|---|
+| `review` | `review_mcp` |
+| `runtime` | `app_launch`, `debugbridge` |
+| `figma_ui` | `app_launch`, `debugbridge`, `figma_rest_api` |
+| `ui_parity` | `app_launch`, `debugbridge`, `figma_rest_api` |
 
-非必需检查项在环境报告中标记为 `not-required`，不参与最终 `available` 判定。旧 session（无 level 字段）按 `heavy` 全查兼容。
+`review` 恒必需。非必需项在报告中标记为 `not-required`，不参与最终 `available` 判定。纯 dev-flow / 脚本 / 文档任务只需 `review`，不需要 App launch、DebugBridge 或 Figma。`--level` 仍用于描述任务复杂度，但不再决定环境门必需项。
 
-本仓库是 skill / 脚本的源码真相源（source of truth）。`install-dev-flow.sh` 会把 skills 链到本机 `~/.codex/skills` 或 `~/.cursor/skills`。
+本仓库是 skill / 脚本的源码真相源（source of truth）。`install-dev-flow.sh` 会把 skills 链到本机 `~/.codex/skills`、`~/.cursor/skills` 或 `~/.config/opencode/skills`。
+
+### OpenCode 支持
+
+`--opencode` 模式下：
+- **XcodeBuildMCP**：跳过 host MCP config 合并（opencode 自行管理 MCP 配置），仍写 `<app>/.xcodebuildmcp/config.yaml` 和 `.dev-flow/xcodebuild-mcp-install.json`
+- **DebugBridge MCP**：跳过 host MCP config 合并，检查 opencode config（`opencode.json` / `opencode.local.json`）是否已配置 `ui_dbugbridge_mcp`，仍安装 app binding（Pod + bootstrap snippet + manifest）
+- **Review 后端**：与 cursor/codex 一致
+- **安装安全**：所有 `.dev-flow/` 状态写入使用统一 `atomic_json_write` safe 函数（symlink 拒绝、trusted-root 边界、原子写入）；host config 写入使用 `safe_write_external`（lstat symlink 检查 + 原子写入）
 
 ## 三条一等路由
 
@@ -89,7 +99,7 @@ bash /path/to/devflow/scripts/dev-flow.sh environment-health run
 
 本仓仅通过 `skills/figma-ui-gates/SKILL.md` **符号链接**到并列目录 `../figma-ui-gates/SKILL.md`，便于 `link-*-skills.sh` 安装；请勿再把全文嵌进本仓。
 
-顺序（不可跳过 / 不可手写“已通过”）：
+顺序（机械门防缺字段/漂移/重放，不替代人工确认）：
 
 ```text
 preflight → G0…G12（含 G6 资产边界与机械绑定校验）
@@ -134,7 +144,7 @@ bash scripts/test-validate-g6-asset-binding.sh
 强制顺序：
 
 ```text
-Step1 整页 G2 等价硬门禁（递归 detail + 真实 Review MCP 证据）
+Step1 整页 G2 等价硬门禁（递归 detail + 真实审查角色证据）
   → validate --stage split
 Step2 全量 minimum-unit live-compare（DebugBridge）
   → 冻结 baseline
@@ -155,7 +165,7 @@ bash scripts/validate-ui-review-artifacts.sh \
 `--stage split` 会拒绝：
 
 - 硬编码 / 非 detail 汇总的 `minimum-unit-index`
-- 缺少真实 Review MCP `run_id` + `verdict` 的 structure/detail review
+- 缺少真实审查角色 `run_id` + `verdict` 的 structure/detail review
 - 含可本地化文案却被 collapse 成 `image` 的 unit
 
 自测：
@@ -180,7 +190,7 @@ bash scripts/dev-flow-session.sh start --type feature|bug|ui_review --level triv
 bash scripts/dev-flow-session.sh configure-gates --required review,figma_ui,runtime
 bash scripts/dev-flow-session.sh confirm-plan --task "short label"
 
-# 环境检查在 confirm-plan 之后、实现之前跑（按会话 level 裁剪必需项；非必需项 not-required，不参与判定）
+# 环境检查在 confirm-plan 之后、实现之前跑（必需能力从 required_gates 派生；非必需项 not-required，不参与判定）
 bash scripts/environment-health-check.sh run
 
 # 环境门禁 available 后 approve-commit / commit
@@ -212,8 +222,9 @@ bash scripts/dev-flow-session.sh read-rules
 
 ## review_mcp 不可用时的 gstack-review fallback
 
-环境门探针检测到 orchestrator MCP 不可用时，会话进入 fallback 模式（证据
-`fallback=gstack-review`）。此时审查**必须**走机械入口，禁止开子 Agent / 宿主审查 agent：
+环境门探针（`scripts/review-health-probe.sh`）通过 review-backend 解析器选择适配器
+（审查角色 / orchestrator-mcp / gstack-review）。当首选适配器不可用时，按策略 fallback 到
+`gstack-review`（证据 `fallback=gstack-review`）。此时审查**必须**走机械入口，禁止开子 Agent / 宿主审查 agent：
 
 ```bash
 bash scripts/run-review-fallback.sh   # [--route code-quality-review]
@@ -225,7 +236,42 @@ session state，并把审查指令、gstack review SKILL.md、route 契约、bou
 stdout。AI 按注入流程亲自审查，把报告写到 runner 指定路径（含 token/digest/
 `review_path=fallback`），然后 `record-gate --name review` 收口——record-gate 强制校验
 token/digest/报告路径三件套 + route 一致 + gstack skill/route 契约签发后未被修改，
-`pass` 收录后销毁 token。不跑 runner 手写的 fallback 报告会被拒收。
+`pass` 收录后销毁 token。不跑 runner 的 fallback 报告会被拒收（降低误填风险，不是对拥有写权限者的密码学证明）。
+
+## 统一 review dispatch ticket
+
+所有 review 报告（agent/mcp/fallback 三条路径）必须携带有效的 `ticket_token` / `ticket_digest`。
+ticket 由 `scripts/issue-review-ticket.sh` 在 dispatch 前签发，record-gate 验证：
+
+- ticket 归属当前 session（token 匹配）
+- ticket artifact 未被篡改（重算 digest）
+- adapter / config_digest / route / worktree_digest 与签发时一致
+- ticket 未被消费（`pass` 后原子标记 consumed，复用被拒）
+- worktree digest 变化检测：签发后 tracked（staged+unstaged）/untracked 文件变更则拒绝（防 dispatch 后偷改代码）。tracked 部分使用结构化内容 hash（枚举变化 paths，记录 base/HEAD/index blob id+mode、worktree 存在性/内容 sha256，二进制安全）。untracked 部分纳入所有 untracked 文件的相对路径 + lstat mode + 类型（file/symlink）+ 内容 hash（symlink 用 target hash，非 symlink 用内容 sha256），untracked symlink 不跳过。merge_base SHA 固化到 ticket，record-gate 重算时用同一 SHA（防止 branch 移动漂移）。非 git 项目无法签发 ticket，无法通过 review gate。
+- route 白名单：只接受 `skills/code-review-workflow/routes/` 下的可 dispatch route
+- result artifact：报告必须携带受控 result artifact + digest（`scripts/record-review-result.sh` 生成）。artifact producer 必须与 report producer 严格绑定（producer mismatch 拒绝）；只接受受控 producer（code-review-workflow）。artifact 读取使用统一 `safe_read_json`/`safe_read_bytes`（原始路径逐级 lstat，拒绝任何 symlink，不可 ValueError pass）。
+- fallback packet 安全写入：`run-review-fallback.sh` 的 packet 创建/写入通过统一 `safe_atomic_write_bytes`（trusted-boundary 安全辅助），拒绝 STATE_DIR/sessions 任意内部/父链 symlink；不用普通 mktemp+mv 绕过。
+- 覆盖保护：存在未消费/未作废的 ticket 时拒绝重新签发，先 `cancel-review-ticket.sh`
+
+例外：read-only `ui_review`（无 `confirmed_at`）不需要 ticket（不做代码改动）。
+
+```bash
+bash scripts/dev-flow.sh issue-review-ticket [--route code-quality-review]
+bash scripts/dev-flow.sh cancel-review-ticket [--reason "text"]
+bash scripts/dev-flow.sh record-review-result   # 从 stdin 读取 adapter 结果
+```
+
+fallback 路径的 ticket 由 `run-review-fallback.sh` 内部自动签发，无需单独调用。
+
+### 诚实声明
+
+本地完整性门用于防误操作/漂移/重放，不是对拥有本机写权限攻击者的密码学证明。
+record-gate 只接受受控 result artifact（producer 严格绑定 + `safe_read_json` 原始路径 lstat），降低误填风险。
+`adapter_result_ref`（宿主 task id / orchestrator run id / gstack packet-run ref）和 `adapter_result_digest`（规范化原始 handoff 文本/文件 digest）记录审查的宿主来源，但真实性由宿主编排层负责，不是本地密码学验证。
+worktree digest 纳入 untracked symlink（不跳过），lstat/readlink 失败 fail closed。
+gstack probe 显式 skill_path 失效直接 blocked，不 fallback 到默认候选。
+非 git 项目无法签发 ticket（worktree_digest.py 要求 git + 可解析 base ref），无法通过 review gate。
+**拥有本机/仓库写权限者不在威胁模型内**——本地机械门无法对抗拥有写权限的恶意 Agent。
 
 ## 安装到本机 skills
 
@@ -256,7 +302,14 @@ devflow/
 ├── scripts/                 # 会话、环境、校验与测试
 │   ├── lib/
 │   │   ├── dev-flow-paths.sh
-│   │   └── dev-flow-rules.sh   # 双层规则机制共享函数
+│   │   ├── dev-flow-rules.sh   # 双层规则机制共享函数
+│   │   ├── review_backend_resolver.py  # 3 适配器解析器 + v1 兼容
+│   │   ├── review-backend-resolver.sh  # bash 封装
+│   │   └── reviewer-readiness.sh       # 审查角色探针
+│   ├── xcode-target-resolver.py    # .xcodebuildmcp/config.yaml 目标解析
+│   ├── review-health-probe.sh      # 适配器选择 + fallback 探针
+│   ├── environment-health-check.sh # 能力模型 + 独立探针
+│   ├── install-review-backend.sh   # 交互式 Review 后端向导
 │   ├── validate-g6-asset-binding.*
 │   ├── validate-ui-review-artifacts.*
 │   ├── fixtures/            # 校验器夹具

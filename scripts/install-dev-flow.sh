@@ -19,13 +19,13 @@ ORCHESTRATOR_ROOT=""
 usage() {
   cat <<EOF
 Usage:
-  bash scripts/install-dev-flow.sh [--cursor | --codex] [--project <app-root>] [--skills-only] [--skip-xcodebuild] [--skip-debugbridge] [--skip-review] [--run-pod-install] [--debugbridge-mcp-root <path>] [--review-backend orchestrator|gstack] [--orchestrator-root <path>]
+  bash scripts/install-dev-flow.sh [--cursor | --codex | --opencode] [--project <app-root>] [--skills-only] [--skip-xcodebuild] [--skip-debugbridge] [--skip-review] [--run-pod-install] [--debugbridge-mcp-root <path>] [--review-backend reviewer|orchestrator|gstack] [--orchestrator-root <path>]
 
 One-shot dev-flow installer for humans and AI agents.
 
 What it does:
-  1. Symlink dev-flow skills into the local Codex or Cursor skills directory
-  2. Prompt for review backend: orchestrator-mcp or gstack-review (or pass --review-backend)
+  1. Symlink dev-flow skills into the local Codex / Cursor / opencode skills directory
+  2. Prompt for review backend: 审查角色（@openai-reviewer）、orchestrator-mcp 或 gstack-review (or pass --review-backend)
   3. Install XcodeBuildMCP (device + session-management + project-discovery workflows)
   4. Install UI-dbugbridge-mcp (Mac MCP + optional iOS LookDebugBridge Pod wiring)
   5. Optionally bind an iOS app repo (creates only <app>/.dev-flow/, no scripts/ copy)
@@ -53,6 +53,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --codex)
       PLATFORM="codex"
+      shift
+      ;;
+    --opencode)
+      PLATFORM="opencode"
       shift
       ;;
     --project)
@@ -104,7 +108,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$PLATFORM" ]]; then
-  if [[ "${CURSOR_AGENT:-}" == "1" || -n "${CURSOR_CONVERSATION_ID:-}" ]]; then
+  if [[ -n "${DEV_FLOW_HOST:-}" ]]; then
+    PLATFORM="$DEV_FLOW_HOST"
+  elif [[ -n "${OPENCODE:-}" ]]; then
+    PLATFORM="opencode"
+  elif [[ "${CURSOR_AGENT:-}" == "1" || -n "${CURSOR_CONVERSATION_ID:-}" ]]; then
     PLATFORM="cursor"
   else
     PLATFORM="codex"
@@ -117,6 +125,8 @@ if [[ "$PLATFORM" == "cursor" ]]; then
   else
     SKILLS_ROOT="$HOME/.cursor/skills"
   fi
+elif [[ "$PLATFORM" == "opencode" ]]; then
+  SKILLS_ROOT="${OPENCODE_SKILLS_ROOT:-$HOME/.config/opencode/skills}"
 else
   if [[ -n "${CODEX_SKILLS_ROOT:-}" ]]; then
     SKILLS_ROOT="$CODEX_SKILLS_ROOT"
@@ -134,6 +144,15 @@ echo "== dev-flow install =="
 echo "Platform:      $PLATFORM"
 echo "Skills linked: $linked_count under $SKILLS_ROOT"
 echo "Source root:   $ROOT"
+
+# --skills-only：只链接 skills，跳过 review/xcode/debug 安装和项目绑定
+if [[ "$SKILLS_ONLY" -eq 1 ]]; then
+  echo
+  echo "Skills-only install complete."
+  echo "Bind an app later with:"
+  echo "  bash \"$ROOT/scripts/install-dev-flow.sh\" --project /path/to/YourApp"
+  exit 0
+fi
 
 if [[ "$SKIP_REVIEW" -eq 0 ]]; then
   review_args=(--"$PLATFORM" --skills-root "$SKILLS_ROOT")
@@ -171,14 +190,6 @@ if [[ "$SKIP_DEBUGBRIDGE" -eq 0 ]]; then
   bash "$ROOT/scripts/install-debugbridge-mcp.sh" "${debugbridge_args[@]}"
 fi
 
-if [[ "$SKILLS_ONLY" -eq 1 ]]; then
-  echo
-  echo "Skills-only install complete."
-  echo "Bind an app later with:"
-  echo "  bash \"$ROOT/scripts/install-dev-flow.sh\" --project /path/to/YourApp"
-  exit 0
-fi
-
 if [[ -z "$PROJECT_ROOT" ]]; then
   echo
   echo "Skills + DebugBridge MCP install complete. No app project bound."
@@ -202,8 +213,9 @@ Daily commands (run from the app repo):
   cd "$PROJECT_ROOT"
   bash "$ROOT/scripts/dev-flow.sh" doctor
   bash "$ROOT/scripts/dev-flow.sh" session start --type bug --task "short label"
+  bash "$ROOT/scripts/dev-flow.sh" xcode-target  # resolve .xcodebuildmcp/config.yaml (if present)
   bash "$ROOT/scripts/dev-flow.sh" app-launch status || bash "$ROOT/scripts/dev-flow.sh" app-launch instructions
-  # after XcodeBuildMCP session_set_defaults + session_show_defaults + build_run_device succeeds:
+  # after XcodeBuildMCP session_set_defaults + session_show_defaults + build_run_device|build_run_sim (resolver launch_action) succeeds:
   bash "$ROOT/scripts/dev-flow.sh" app-launch record --report <bounded-xcodebuildmcp-json|->
   bash "$ROOT/scripts/dev-flow.sh" environment-health run
 
@@ -213,13 +225,15 @@ DebugBridge:
   - If pod changed: pod install + add .dev-flow/debugbridge-app-bootstrap.swift.snippet in Debug launch
 
 Review backend:
-  - Manifest: .dev-flow/review-backend.json
-  - orchestrator-mcp path (if chosen): .dev-flow/orchestrator-mcp-root
+  - Config: .dev-flow/review-backend.local.json (project) or ~/.config/dev-flow/config.json (user)
+  - 审查角色（agent/openai-reviewer）：需 opencode.json 含 agent openai-reviewer 及 provider/apiKey 配置（无额外文件）
+  - orchestrator-mcp：path recorded in .dev-flow/orchestrator-mcp-root
+  - gstack-review（skill/gstack）：skill 路径记录在 config 的 adapters 段
 
 XcodeBuildMCP:
   - Manifest: .dev-flow/xcodebuild-mcp-install.json
   - Project config: .xcodebuildmcp/config.yaml
-  - Ask the user to restart MCP host if reloading is needed, then tool_search → session_set_defaults → session_show_defaults → build_run_device on the chosen target (wired device or Simulator)
+  - Ask the user to restart MCP host if reloading is needed, then tool_search → session_set_defaults → session_show_defaults → build_run_device|build_run_sim (resolver launch_action) on the chosen target
 
 Figma token: set FIGMA_REST_TOKEN or FIGMA_ACCESS_TOKEN in the environment.
 EOF

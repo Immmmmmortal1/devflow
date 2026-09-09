@@ -2,15 +2,15 @@
 
 These route specifications define review criteria that use the shared capabilities in the parent
 `code-review-workflow`. Each route must provide its own required evidence, reviewer instructions,
-and final status. The parent owns MCP health, packet construction, invocation, fallback, and result
-handoff only.
+and final status. The parent owns adapter health, packet construction, invocation, pre-dispatch
+fallback selection, post-dispatch fail-closed enforcement, and result handoff only.
 
 | Route | Activate when | Route owns |
 |---|---|---|
 | `code-quality-review` | Any source edit needing generic independent review | correctness, regressions, security, concurrency, and maintainability findings |
 | `requirements-chain-review` | An approved requirements artifact governs the changed behavior | state, fallback, invariant, and Golden case compliance |
 | `api-contract-review` | API fields or server-driven behavior are changed or consumed | field → business → UI/interaction mapping and contract validation |
-| `ui-parity-review` | After `ui-review` authorized source repairs need independent Review MCP | diff matches authorized findings; bindings/extras/anchors preserved |
+| `ui-parity-review` | After `ui-review` authorized source repairs need independent 审查角色 | diff matches authorized findings; bindings/extras/anchors preserved |
 
 All routes also use [review-loop.md](review-loop.md) for finding decisions, validation reruns, and
 the three-round stop gate.
@@ -35,4 +35,5 @@ Output status:
 ```
 
 The route may call the parent base capability only through this contract. It must not duplicate
-MCP process health checks or invent a second fallback protocol.
+adapter health checks or invent a second fallback protocol. Post-dispatch fallback switching is
+prohibited; fallback is selected only pre-dispatch by the resolver.

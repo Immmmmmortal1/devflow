@@ -15,14 +15,19 @@ usage() {
 Usage:
   scripts/record-app-launch-report.sh record --report <path>
 
-Record a bounded XcodeBuildMCP build_run_device success report for the current dev-flow
-session. --report is REQUIRED: pass a real build_run_device result path (or - for stdin).
-This script never fabricates a success payload on its own.
+Record a bounded XcodeBuildMCP build_run success report for the current dev-flow
+session. --report is REQUIRED: pass a real build_run_device (wired) or build_run_sim
+(simulator) result path (or - for stdin). This script never fabricates a success
+payload on its own.
 
-The report JSON must include producer=XcodeBuildMCP, schema_version=1, the current
-session_id, status=available, build_run_device=success, device_transport=wired|simulator, and
-app_launched=true. It must also carry build_id and device_id reflecting the actual
-build and device used (placeholders "unknown"/"n/a"/"-"/"" are rejected, case-insensitive).
+The report JSON must include producer=XcodeBuildMCP, schema_version=2, the current
+session_id, status=available, build_run_action=build_run_device|build_run_sim,
+build_run_result=success, device_transport=wired|simulator (must cross-match the
+action: build_run_device↔wired, build_run_sim↔simulator), and app_launched=true.
+It must also carry build_id and device_id reflecting the actual build and device
+used (placeholders "unknown"/"n/a"/"-"/"" are rejected, case-insensitive).
+
+Stale schema_version=1 reports are rejected; re-record with the v2 schema.
 
 Session selection matches scripts/resolve-dev-flow-session-id.sh.
 EOF
@@ -74,12 +79,14 @@ report_path = Path(sys.argv[1])
 session_id = sys.argv[2]
 source_path = sys.argv[3]
 timestamp = sys.argv[4]
+dev_flow_source_root = sys.argv[5]
+project_root = sys.argv[6]
 
 REQUIRED = {
     "producer": "XcodeBuildMCP",
-    "schema_version": 1,
+    "schema_version": 2,
     "status": "available",
-    "build_run_device": "success",
+    "build_run_result": "success",
 }
 
 
@@ -89,12 +96,19 @@ def validate_payload(payload):
     for key, expected in REQUIRED.items():
         if payload.get(key) != expected:
             raise SystemExit(f"Invalid app launch report field: {key}")
-    # device_transport 接受 wired（有线物理真机）或 simulator（显式指定的 iOS 模拟器）；
-    # 其他值视为非法，防止伪造或未确认的目标降级。
-    transport = payload.get("device_transport")
-    if transport not in ("wired", "simulator"):
+    # build_run_action 必须是真实 XcodeBuildMCP 动作之一；
+    # device_transport 必须与 action 交叉一致（不可伪造 simulator 为 build_run_device）。
+    action = payload.get("build_run_action")
+    if action not in ("build_run_device", "build_run_sim"):
         raise SystemExit(
-            "App launch report field device_transport must be 'wired' or 'simulator'."
+            "App launch report field build_run_action must be 'build_run_device' or 'build_run_sim'."
+        )
+    transport = payload.get("device_transport")
+    expected_transport = "wired" if action == "build_run_device" else "simulator"
+    if transport != expected_transport:
+        raise SystemExit(
+            f"App launch report device_transport must be '{expected_transport}' for "
+            f"build_run_action='{action}' (got '{transport}')."
         )
     if payload.get("session_id") != session_id:
         raise SystemExit("App launch report session_id does not match the current session.")
@@ -120,10 +134,10 @@ def validate_payload(payload):
         )
 
 
-# 无 --report 时拒绝生成成功 payload，调用方必须提供真实 build_run_device 来源。
+# 无 --report 时拒绝生成成功 payload，调用方必须提供真实 build_run result 来源。
 if not source_path:
     raise SystemExit(
-        "record requires --report <path> or - (stdin) with a real XcodeBuildMCP build_run_device result"
+        "record requires --report <path> or - (stdin) with a real XcodeBuildMCP build_run result"
     )
 
 if source_path == "-":
@@ -144,10 +158,24 @@ if session_id == "local" and os.environ.get("CURSOR_AGENT") == "1":
         "Run dev-flow session start and pass DEV_FLOW_SESSION_ID via build_run_device env."
     )
 
-report_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
-print(report_path)
+# 统一使用 safe_atomic_write_json（trusted_root = project/.dev-flow）
+# safe_atomic_write_json 会沿原始路径逐级 lstat + resolve 边界校验，
+# 拒绝 symlink（包括 sessions 目录 symlink 和 target 文件 symlink），越界 fail closed。
+sys.path.insert(0, os.path.join(dev_flow_source_root, 'scripts', 'lib'))
+from atomic_json_write import safe_mkdir, safe_atomic_write_json
+
+trusted_root = Path(project_root) / ".dev-flow"
+sessions_dir = trusted_root / "sessions"
+
+# 安全创建 sessions 目录（若不存在）
+if not sessions_dir.exists():
+    safe_mkdir(trusted_root, sessions_dir)
+
+# 原子写入 report 文件（safe_atomic_write_json 内部拒绝 target symlink + 越界）
+safe_atomic_write_json(trusted_root, str(report_path), payload)
+print(str(report_path))
 PY
 
 # 此时 python 进程的 stdin 就是本脚本的 stdin（调用者的 JSON），
 # --report - 场景可正确读取；普通文件路径场景不受影响。
-/usr/bin/python3 "$PYTHON_SCRIPT_TMP" "$REPORT_FILE" "$SESSION_ID" "$source_path" "$(now_utc)"
+/usr/bin/python3 "$PYTHON_SCRIPT_TMP" "$REPORT_FILE" "$SESSION_ID" "$source_path" "$(now_utc)" "$DEV_FLOW_SOURCE_ROOT" "$DEV_FLOW_PROJECT_ROOT"

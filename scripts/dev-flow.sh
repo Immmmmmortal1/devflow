@@ -17,6 +17,10 @@ Commands:
   app-launch ...                  app-launch-preflight.sh status|instructions|template|record
   environment-health run          environment-health-check.sh run
   record-app-launch record [...]  record-app-launch-report.sh record [...]
+  xcode-target                    Resolve .xcodebuildmcp/config.yaml into session_set_defaults fields
+  issue-review-ticket [--route R] Issue a unified review dispatch ticket (call before any review)
+  cancel-review-ticket [--reason T] Cancel an unconsumed review ticket (required before re-issue)
+  record-review-result             Read adapter result from stdin, write result artifact + gate report
 
 Gate scripts always run from the dev-flow clone. Session state lives in the app repo
 under .dev-flow/sessions/. Run commands from the app root or pass --project.
@@ -66,6 +70,18 @@ case "$cmd" in
     ;;
   record-app-launch)
     exec bash "$(dev_flow_script_path record-app-launch-report.sh)" "$@"
+    ;;
+  xcode-target)
+    exec bash "$(dev_flow_script_path xcode-target-resolver.sh)" "$@"
+    ;;
+  issue-review-ticket)
+    exec bash "$(dev_flow_script_path issue-review-ticket.sh)" "$@"
+    ;;
+  cancel-review-ticket)
+    exec bash "$(dev_flow_script_path cancel-review-ticket.sh)" "$@"
+    ;;
+  record-review-result)
+    exec bash "$(dev_flow_script_path record-review-result.sh)" "$@"
     ;;
   *)
     echo "Unknown command: $cmd" >&2

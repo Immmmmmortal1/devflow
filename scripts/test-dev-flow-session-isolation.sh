@@ -10,10 +10,11 @@ cat > "$TMP_ROOT/bin/app-launch-probe" <<'EOF'
 #!/usr/bin/env bash
 /usr/bin/python3 - "${DEV_FLOW_SESSION_ID}" <<'PY'
 import json, sys
-print(json.dumps({"producer":"XcodeBuildMCP","schema_version":1,"session_id":sys.argv[1],
-                  "status":"available","build_run_device":"success",
+print(json.dumps({"producer":"XcodeBuildMCP","schema_version":2,"session_id":sys.argv[1],
+                  "status":"available","build_run_action":"build_run_device",
+                  "build_run_result":"success",
                   "device_transport":"wired","app_launched":True,
-                  "build_id":"build-test-1","device_id":"device-test-1"}))
+                  "build_id":"build-isolation-1","device_id":"device-isolation-1"}))
 PY
 EOF
 /bin/chmod +x "$TMP_ROOT/bin/app-launch-probe"

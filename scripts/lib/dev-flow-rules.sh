@@ -22,15 +22,44 @@ dev_flow_rules_init() {
 }
 
 # .dev-flow 目录或项目规则文件为 symlink 时拒绝（防路径逃逸/内容外控）
+# 含父链检查：.dev-flow 的父目录（项目根）也不能是 symlink
 dev_flow_rules_reject_symlinks() {
-  if [[ -L "$DEV_FLOW_PROJECT_ROOT/.dev-flow" ]]; then
-    echo "refusing to use symlinked .dev-flow directory: $DEV_FLOW_PROJECT_ROOT/.dev-flow" >&2
+  local dev_flow_dir="$DEV_FLOW_PROJECT_ROOT/.dev-flow"
+  if [[ -L "$dev_flow_dir" ]]; then
+    echo "refusing to use symlinked .dev-flow directory: $dev_flow_dir" >&2
     exit 1
   fi
   if [[ -L "$DEV_FLOW_PROJECT_RULES_FILE" ]]; then
     echo "refusing to use symlinked project rules file: $DEV_FLOW_PROJECT_RULES_FILE" >&2
     exit 1
   fi
+  # 父链检查：.dev-flow 已存在时检查其父目录（项目根）是否为 symlink
+  if [[ -d "$dev_flow_dir" && -L "$DEV_FLOW_PROJECT_ROOT" ]]; then
+    echo "refusing to use .dev-flow under a symlinked project root: $DEV_FLOW_PROJECT_ROOT" >&2
+    exit 1
+  fi
+}
+
+# 安全 mkdir：不跟随 symlink。检查目标路径及其现有父目录不是 symlink 后才创建。
+# 用法: dev_flow_safe_mkdir_p <path>
+dev_flow_safe_mkdir_p() {
+  local target="$1"
+  [[ -z "$target" ]] && return 1
+  # 如果目标已存在且是 symlink，拒绝
+  if [[ -L "$target" ]]; then
+    echo "refusing to mkdir through a symlink: $target" >&2
+    return 1
+  fi
+  # 逐级检查现有父目录是否为 symlink（不跟随）
+  local check_path="$target"
+  while [[ "$check_path" != "/" && "$check_path" != "." ]]; do
+    if [[ -L "$check_path" ]]; then
+      echo "refusing to mkdir through a symlinked parent: $check_path" >&2
+      return 1
+    fi
+    check_path="$(dirname "$check_path")"
+  done
+  mkdir -p "$target"
 }
 
 # 项目规则文件不存在则创建带注释空模板；拒绝 symlink 路径

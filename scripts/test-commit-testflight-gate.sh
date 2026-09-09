@@ -12,7 +12,7 @@ trap '/bin/rm -rf -- "$TMP_ROOT"' EXIT
 /bin/mkdir -p "$TMP_ROOT/.dev-flow/sessions" "$TMP_ROOT/bin"
 
 # TMP_ROOT 同时作为 git 业务项目
-/usr/bin/git -C "$TMP_ROOT" init -q
+/usr/bin/git -C "$TMP_ROOT" init -q -b main 2>/dev/null || { /usr/bin/git -C "$TMP_ROOT" init -q && /usr/bin/git -C "$TMP_ROOT" checkout -qb main; }
 /usr/bin/git -C "$TMP_ROOT" config user.email "test@example.com"
 /usr/bin/git -C "$TMP_ROOT" config user.name "test"
 printf 'init\n' > "$TMP_ROOT/app.txt"
@@ -24,9 +24,18 @@ printf '.dev-flow/\n' > "$TMP_ROOT/.gitignore"
 
 cat > "$TMP_ROOT/bin/ok-probe" <<'EOF'
 #!/usr/bin/env bash
-exit 0
+/usr/bin/python3 - "${DEV_FLOW_SESSION_ID:-test}" <<'PY'
+import json, sys
+print(json.dumps({"status":"available","evidence":"test_probe",
+                   "selected_adapter":"agent/openai-reviewer",
+                   "config_digest":"sha256:739023b65d327595c397b44d2c981e1c2b2e587a68dcacfcb68ced5fce4fe7d8",
+                   "source":"project"}))
+PY
 EOF
 /bin/chmod +x "$TMP_ROOT/bin/ok-probe"
+
+# shellcheck source=test-helper-inject-ticket.sh
+source "$ROOT/scripts/test-helper-inject-ticket.sh"
 
 run_for() {
   local session_id="$1"
@@ -45,16 +54,36 @@ run_health_review_only() {
 
 write_review_pass() {
   local session_id="$1"
-  /usr/bin/python3 - "$TMP_ROOT" "$session_id" <<'PY'
-import json, sys
+  # 注入 review_ticket
+  local ticket_info
+  ticket_info="$(inject_review_ticket "$session_id" "agent/openai-reviewer" "sha256:739023b65d327595c397b44d2c981e1c2b2e587a68dcacfcb68ced5fce4fe7d8" "code-quality-review" "$TMP_ROOT/.dev-flow/sessions/$session_id.json" "$TMP_ROOT")"
+  local tt="${ticket_info% *}"
+  local td="${ticket_info#* }"
+  local ra_info
+  ra_info="$(inject_result_artifact "$session_id" "$TMP_ROOT/.dev-flow/sessions/$session_id.json" "$TMP_ROOT" "pass" "test-run-commit" "test review pass")"
+  local ra_path="${ra_info% *}"
+  local ra_digest="${ra_info#* }"
+  /usr/bin/python3 - "$TMP_ROOT" "$session_id" "$tt" "$td" "$ra_path" "$ra_digest" <<'PY'
+import json, sys, hashlib
 from pathlib import Path
 root = Path(sys.argv[1])
 session_id = sys.argv[2]
-(root / f"review-{session_id}.json").write_text(json.dumps({
+tt, td, ra_path, ra_digest = sys.argv[3:7]
+run_id = "test-run-commit"
+ref = f"test-host-ref-{run_id}"
+digest = "sha256:" + hashlib.sha256(f"test-handoff-{run_id}".encode()).hexdigest()
+# 报告写到 .dev-flow/sessions/ 下（从 worktree digest 排除，避免 digest 漂移）
+(root / ".dev-flow" / "sessions" / f"review-{session_id}.json").write_text(json.dumps({
     "producer": "code-review-workflow", "schema_version": 1,
     "session_id": session_id, "gate": "review",
     "status": "pass", "reviewer_result": "pass",
     "evidence": "test review pass",
+    "selected_adapter": "agent/openai-reviewer",
+    "config_digest": "sha256:739023b65d327595c397b44d2c981e1c2b2e587a68dcacfcb68ced5fce4fe7d8",
+    "run_id": run_id, "diff_evidence": "sha256:745d1066289590bc812ccd4db329198c39b7c60a65ed9c752dd4331f58476b0e",
+    "adapter_result_ref": ref, "adapter_result_digest": digest,
+    "ticket_token": tt, "ticket_digest": td,
+    "result_artifact": ra_path, "result_artifact_digest": ra_digest,
 }) + "\n")
 PY
 }
@@ -66,7 +95,7 @@ setup_approved() {
   run_for "$session_id" confirm-plan >/dev/null
   run_health_review_only "$session_id"
   write_review_pass "$session_id"
-  run_for "$session_id" record-gate --name review --report "$TMP_ROOT/review-$session_id.json" >/dev/null
+  run_for "$session_id" record-gate --name review --report "$TMP_ROOT/.dev-flow/sessions/review-$session_id.json" >/dev/null
   run_for "$session_id" approve-commit >/dev/null
 }
 
@@ -337,7 +366,8 @@ assert tf["status"] == "uploaded", tf
 assert len(tf["evidence"] or "") <= 1000, len(tf["evidence"] or "")
 PY
 
-# ---- 用例 18：项目根非 git repo → commit 拒绝 ----
+# ---- 用例 18：项目根非 git repo → review 和 commit 均拒绝 ----
+# 非 git 项目无法签发 ticket（worktree_digest.py 要求 git），record-gate fail closed
 TMP_NG="$(/usr/bin/mktemp -d)"
 /bin/mkdir -p "$TMP_NG/.dev-flow/sessions"
 run_ng() {
@@ -349,24 +379,24 @@ run_ng confirm-plan >/dev/null
 DEV_FLOW_PROJECT_ROOT="$TMP_NG" DEV_FLOW_SESSION_ID=ng \
   DEV_FLOW_TEST_MODE=1 DEV_FLOW_REVIEW_MCP_HEALTH_CMD="$TMP_ROOT/bin/ok-probe" \
   /bin/bash "$ROOT/scripts/environment-health-check.sh" run >/dev/null
-/usr/bin/python3 - "$TMP_NG" <<'PY'
-import json, sys
-from pathlib import Path
-root = Path(sys.argv[1])
-(root / "review-ng.json").write_text(json.dumps({
-    "producer": "code-review-workflow", "schema_version": 1,
-    "session_id": "ng", "gate": "review",
-    "status": "pass", "reviewer_result": "pass",
-    "evidence": "test review pass",
-}) + "\n")
-PY
-run_ng record-gate --name review --report "$TMP_NG/review-ng.json" >/dev/null
-run_ng approve-commit >/dev/null
+# 非 git 项目签发 ticket 应失败（worktree_digest.py 要求 git）
+if inject_review_ticket "ng" "agent/openai-reviewer" "sha256:739023b65d327595c397b44d2c981e1c2b2e587a68dcacfcb68ced5fce4fe7d8" "code-quality-review" "$TMP_NG/.dev-flow/sessions/ng.json" "$TMP_NG" >/dev/null 2>&1; then
+  echo "FAIL: ticket injection should fail for non-git project" >&2
+  exit 1
+fi
+echo "OK: non-git project ticket injection rejected"
+# 非 git 项目 record-gate 应失败（无有效 ticket + worktree_digest 不可重算）
+if run_ng record-gate --name review --report "$TMP_NG/.dev-flow/sessions/review-ng.json" 2>/dev/null; then
+  echo "FAIL: record-gate should fail for non-git project" >&2
+  exit 1
+fi
+echo "OK: non-git project record-gate rejected"
+# 非 git 项目 commit 应失败（无法通过 review → 无法 approve → commit 被拒）
 if run_ng commit --message "should fail" 2>"$TMP_NG/ng.err"; then
   echo "FAIL: commit passed in non-git project root" >&2
   exit 1
 fi
-/usr/bin/grep -q "not a git repository" "$TMP_NG/ng.err" || { echo "FAIL: non-git rejection message wrong" >&2; exit 1; }
+echo "OK: non-git project commit rejected (cannot complete full flow without git)"
 /bin/rm -rf -- "$TMP_NG"
 
 # ---- 用例 19：git commit 执行失败 → state 不写入 committed 记录 ----

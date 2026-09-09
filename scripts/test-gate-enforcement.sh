@@ -5,13 +5,42 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_ROOT="$(/usr/bin/mktemp -d)"
 trap '/bin/rm -rf -- "$TMP_ROOT"' EXIT
 
+# git init（record-gate 要求项目为 git 仓库，worktree_digest 需可解析 base ref）
+/usr/bin/git -C "$TMP_ROOT" init -q -b main 2>/dev/null || { /usr/bin/git -C "$TMP_ROOT" init -q && /usr/bin/git -C "$TMP_ROOT" checkout -qb main; }
+/usr/bin/git -C "$TMP_ROOT" config user.email "test@example.com"
+/usr/bin/git -C "$TMP_ROOT" config user.name "test"
+printf 'base\n' > "$TMP_ROOT/base.txt"
+/usr/bin/git -C "$TMP_ROOT" add base.txt
+/usr/bin/git -C "$TMP_ROOT" commit -qm "init"
+printf '.dev-flow/\n' > "$TMP_ROOT/.gitignore"
+/usr/bin/git -C "$TMP_ROOT" add .gitignore
+/usr/bin/git -C "$TMP_ROOT" commit -qm "gitignore"
+
 /bin/mkdir -p "$TMP_ROOT/.dev-flow/sessions" "$TMP_ROOT/bin"
+
+# review probe：输出 selected_adapter/config_digest 供 selection binding
+cat > "$TMP_ROOT/bin/review-probe" <<'EOF'
+#!/usr/bin/env bash
+/usr/bin/python3 - "${DEV_FLOW_SESSION_ID}" <<'PY'
+import json, sys
+print(json.dumps({"status":"available","evidence":"test_review_probe",
+                   "selected_adapter":"agent/openai-reviewer",
+                   "config_digest":"sha256:d233ef6d85ae22add81e82e8eb7a48de5eea62173d527a1178c612686fe372bc",
+                   "source":"project"}))
+PY
+EOF
+/bin/chmod +x "$TMP_ROOT/bin/review-probe"
+
+# shellcheck source=test-helper-inject-ticket.sh
+source "$ROOT/scripts/test-helper-inject-ticket.sh"
+
 cat > "$TMP_ROOT/bin/app-launch-probe" <<'EOF'
 #!/usr/bin/env bash
 /usr/bin/python3 - "${DEV_FLOW_SESSION_ID}" <<'PY'
 import json, sys
-print(json.dumps({"producer":"XcodeBuildMCP","schema_version":1,"session_id":sys.argv[1],
-                  "status":"available","build_run_device":"success",
+print(json.dumps({"producer":"XcodeBuildMCP","schema_version":2,"session_id":sys.argv[1],
+                  "status":"available","build_run_action":"build_run_device",
+                  "build_run_result":"success",
                   "device_transport":"wired","app_launched":True,
                   "build_id":"build-test-1","device_id":"device-test-1"}))
 PY
@@ -25,7 +54,7 @@ run_for() {
 DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=gate-test \
   DEV_FLOW_APP_LAUNCH_HEALTH_CMD="$TMP_ROOT/bin/app-launch-probe" \
   DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD=/usr/bin/true \
-  DEV_FLOW_REVIEW_MCP_HEALTH_CMD=/usr/bin/true \
+  DEV_FLOW_REVIEW_MCP_HEALTH_CMD="$TMP_ROOT/bin/review-probe" \
   DEV_FLOW_FIGMA_REST_HEALTH_CMD=/usr/bin/true \
   /bin/bash "$ROOT/scripts/dev-flow-session.sh" start --type feature --level heavy --task "gate test" >/dev/null
 
@@ -36,15 +65,29 @@ DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=gate-test \
   DEV_FLOW_TEST_MODE=1 \
   DEV_FLOW_APP_LAUNCH_HEALTH_CMD="$TMP_ROOT/bin/app-launch-probe" \
   DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD=/usr/bin/true \
-  DEV_FLOW_REVIEW_MCP_HEALTH_CMD=/usr/bin/true \
+  DEV_FLOW_REVIEW_MCP_HEALTH_CMD="$TMP_ROOT/bin/review-probe" \
   DEV_FLOW_FIGMA_REST_HEALTH_CMD=/usr/bin/true \
   /bin/bash "$ROOT/scripts/environment-health-check.sh" run >/dev/null
 
 write_report() {
   local name="$1"
   local status="$2"
-  /usr/bin/python3 - "$TMP_ROOT/$name.json" "$status" "$TMP_ROOT" <<'PY'
+  # review gate 需要先注入 ticket
+  if [[ "$name" == "review" ]]; then
+    local ticket_info
+    ticket_info="$(inject_review_ticket "gate-test" "agent/openai-reviewer" "sha256:d233ef6d85ae22add81e82e8eb7a48de5eea62173d527a1178c612686fe372bc" "code-quality-review" "$TMP_ROOT/.dev-flow/sessions/gate-test.json" "$TMP_ROOT")"
+    export GATE_TICKET_TOKEN="${ticket_info% *}"
+    export GATE_TICKET_DIGEST="${ticket_info#* }"
+    # 注入 result artifact
+    local ra_info
+    ra_info="$(inject_result_artifact "gate-test" "$TMP_ROOT/.dev-flow/sessions/gate-test.json" "$TMP_ROOT" "$status" "test-run-gate" "${name} ${status}")"
+    export GATE_RESULT_PATH="${ra_info% *}"
+    export GATE_RESULT_DIGEST="${ra_info#* }"
+  fi
+  /usr/bin/python3 - "$TMP_ROOT/.dev-flow/sessions/$name.json" "$status" "$TMP_ROOT" <<'PY'
 import json
+import hashlib
+import os
 import sys
 from pathlib import Path
 
@@ -60,8 +103,20 @@ report = {
     "evidence": f"{name} {status}",
 }
 # review gate 要求 producer=code-review-workflow + reviewer_result 与 status 一致
+# + selection binding (selected_adapter/config_digest) + dispatch evidence (run_id/diff_evidence)
+# + ticket_token/ticket_digest (统一机械防伪)
 if name == "review":
     report["reviewer_result"] = status
+    report["selected_adapter"] = "agent/openai-reviewer"
+    report["config_digest"] = "sha256:d233ef6d85ae22add81e82e8eb7a48de5eea62173d527a1178c612686fe372bc"
+    report["run_id"] = "test-run-gate"
+    report["diff_evidence"] = "sha256:bdcb1e37ee36e0c86332304f2c55c31bf3c49e2d8e9d36aa6a108620d29836b4"
+    report["adapter_result_ref"] = "test-host-ref-test-run-gate"
+    report["adapter_result_digest"] = "sha256:" + hashlib.sha256(b"test-handoff-test-run-gate").hexdigest()
+    report["ticket_token"] = os.environ.get("GATE_TICKET_TOKEN", "")
+    report["ticket_digest"] = os.environ.get("GATE_TICKET_DIGEST", "")
+    report["result_artifact"] = os.environ.get("GATE_RESULT_PATH", "")
+    report["result_artifact_digest"] = os.environ.get("GATE_RESULT_DIGEST", "")
 if name == "figma_ui":
     report["gates"] = {f"G{i}": "pass" for i in range(13)}
     fixture = tmp_root / "g6-fixture"
@@ -134,10 +189,10 @@ PY
 }
 
 write_report review pass
-run_for record-gate --name review --report "$TMP_ROOT/review.json" >/dev/null
+run_for record-gate --name review --report "$TMP_ROOT/.dev-flow/sessions/review.json" >/dev/null
 
 write_report figma_ui pass
-if ! /usr/bin/python3 - "$TMP_ROOT/figma_ui.json" <<'PY'
+if ! /usr/bin/python3 - "$TMP_ROOT/.dev-flow/sessions/figma_ui.json" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -150,13 +205,13 @@ then
   echo "FAIL: malformed figma report fixture unexpectedly failed" >&2
   exit 1
 fi
-if run_for record-gate --name figma_ui --report "$TMP_ROOT/figma_ui.json" >/dev/null 2>&1; then
+if run_for record-gate --name figma_ui --report "$TMP_ROOT/.dev-flow/sessions/figma_ui.json" >/dev/null 2>&1; then
   echo "FAIL: incomplete G0-G12 result reached the session" >&2
   exit 1
 fi
 
 write_report figma_ui pass
-/usr/bin/python3 - "$TMP_ROOT/figma_ui.json" "$TMP_ROOT/figma_ui-missing-g6.json" <<'PY'
+/usr/bin/python3 - "$TMP_ROOT/.dev-flow/sessions/figma_ui.json" "$TMP_ROOT/.dev-flow/sessions/figma_ui-missing-g6.json" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -165,23 +220,23 @@ for key in ("g6_validation", "g6_validation_report", "artifact_workspace", "sour
     report.pop(key, None)
 Path(sys.argv[2]).write_text(json.dumps(report) + "\n")
 PY
-if run_for record-gate --name figma_ui --report "$TMP_ROOT/figma_ui-missing-g6.json" >/dev/null 2>&1; then
+if run_for record-gate --name figma_ui --report "$TMP_ROOT/.dev-flow/sessions/figma_ui-missing-g6.json" >/dev/null 2>&1; then
   echo "FAIL: figma_ui pass without g6_validation should be rejected" >&2
   exit 1
 fi
 
 write_report figma_ui pass
-run_for record-gate --name figma_ui --report "$TMP_ROOT/figma_ui.json" >/dev/null
+run_for record-gate --name figma_ui --report "$TMP_ROOT/.dev-flow/sessions/figma_ui.json" >/dev/null
 
 write_report runtime runtime-failed
-run_for record-gate --name runtime --report "$TMP_ROOT/runtime.json" >/dev/null
+run_for record-gate --name runtime --report "$TMP_ROOT/.dev-flow/sessions/runtime.json" >/dev/null
 if run_for approve-commit >/dev/null 2>&1; then
   echo "FAIL: failed runtime gate reached approve-commit" >&2
   exit 1
 fi
 
 write_report runtime runtime-verified
-run_for record-gate --name runtime --report "$TMP_ROOT/runtime.json" >/dev/null
+run_for record-gate --name runtime --report "$TMP_ROOT/.dev-flow/sessions/runtime.json" >/dev/null
 run_for approve-commit >/dev/null
 
 /usr/bin/python3 - "$TMP_ROOT/.dev-flow/sessions/gate-test.json" <<'PY'
