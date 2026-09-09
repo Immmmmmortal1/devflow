@@ -125,7 +125,7 @@ bash scripts/install-dev-flow.sh --project <ios-app-root>
 - The app repo gets only `.dev-flow/` session state plus XcodeBuild / DebugBridge install manifests
 - Installs [XcodeBuildMCP](https://github.com/getsentry/XcodeBuildMCP): merges MCP config with `device`, `session-management`, and `project-discovery` workflows; writes `<app>/.xcodebuildmcp/config.yaml`
 - Installs [UI-dbugbridge-mcp](https://github.com/Immmmmmortal1/UI-dbugbridge-mcp): Mac MCP server + LookDebugBridge Pod wiring when a Podfile exists
-- Prompts for review backend: [orchestrator-mcp](https://github.com/Immmmmmortal1/orchestrator-mcp) or gstack-review; use `--review-backend orchestrator|gstack` non-interactively
+- Prompts for review backend: `agent/openai-reviewer`, [orchestrator-mcp](https://github.com/Immmmmmortal1/orchestrator-mcp), or `skill/gstack`; use `--review-backend agent/openai-reviewer|mcp/orchestrator|skill/gstack` non-interactively (v1 aliases: `reviewer|orchestrator|gstack`). Non-interactive installs without CLI, environment, or existing configuration fail closed
 - After install, if reloading is needed, ask the user to restart the MCP host; dev-flow must not
   close or restart the active MCP connection on its own
 - After install, if `pod_changed` in `.dev-flow/debugbridge-install.json`: run `pod install`, add Debug bootstrap from `.dev-flow/debugbridge-app-bootstrap.swift.snippet`
