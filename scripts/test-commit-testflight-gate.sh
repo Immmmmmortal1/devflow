@@ -91,7 +91,7 @@ PY
 # trivial 链路走到 approve-commit（commit 入口的前置）
 setup_approved() {
   local session_id="$1"
-  run_for "$session_id" start --type feature --level trivial --task "$session_id" >/dev/null
+  run_for "$session_id" start --type feature --level standard --task "$session_id" >/dev/null
   run_for "$session_id" confirm-plan >/dev/null
   run_health_review_only "$session_id"
   write_review_pass "$session_id"
@@ -110,7 +110,7 @@ head_of() {
 }
 
 # ---- 用例 1：未 approve-commit 时 commit 拒绝 ----
-run_for s1 start --type feature --level trivial --task "s1" >/dev/null
+run_for s1 start --type feature --level standard --task "s1" >/dev/null
 stage_change f1
 if run_for s1 commit --message "should fail" >/dev/null 2>&1; then
   echo "FAIL: commit passed without approve-commit" >&2
@@ -374,7 +374,7 @@ run_ng() {
   DEV_FLOW_PROJECT_ROOT="$TMP_NG" DEV_FLOW_SESSION_ID=ng \
     /bin/bash "$ROOT/scripts/dev-flow-session.sh" "$@"
 }
-run_ng start --type feature --level trivial --task "ng" >/dev/null
+run_ng start --type feature --level standard --task "ng" >/dev/null
 run_ng confirm-plan >/dev/null
 DEV_FLOW_PROJECT_ROOT="$TMP_NG" DEV_FLOW_SESSION_ID=ng \
   DEV_FLOW_TEST_MODE=1 DEV_FLOW_REVIEW_MCP_HEALTH_CMD="$TMP_ROOT/bin/ok-probe" \

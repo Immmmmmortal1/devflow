@@ -166,11 +166,11 @@ bash scripts/dev-flow-session.sh start --type bug|feature|ui_review --level triv
 
 Task level (`--level`, only meaningful for `start`):
 
-- `trivial` — 文案 / typo / 纯逻辑微调专用轻量通道；环境门只要求 `review_mcp`；仅 `review` 门；`configure-gates` 禁止加 `runtime`/`figma_ui`/`ui_parity`。
-- `standard` — 默认；环境门要求 `app_launch` + `review_mcp`。
-- `heavy` — 新 Figma UI / `ui_review`；环境门全 4 项（`app_launch`、`debugbridge`、`review_mcp`、`figma_rest_api`）。
+- `trivial` — 文档 / pod-patch 修补专用 fast-path；`required_gates=[]`（环境门四项 not-required 且 overall available）；**禁止 `configure-gates`**；必须带 `--trivial-kind docs|pod-patch`，pod-patch 还需 `--dependency NAME --from-version x.y.z --to-version x.y.z`；不走独立 review/ticket/review-health/App/DebugBridge/Figma，但仍需 confirm-plan → environment-health → `validate-trivial` → approve-commit → commit。
+- `standard` — 默认；`required_gates=[review]`，普通 feature/bug。
+- `heavy` — 新 Figma UI / `ui_review`；需手动 `configure-gates` 加 `runtime`/`figma_ui`/`ui_parity`，环境门相应能力必需。
 
-环境健康检查的必需能力从会话的 `required_gates` 派生（`review` 恒必需），非必需项在报告中标记为 `not-required` 且不参与最终 `available` 判定。
+环境健康检查的必需能力从会话的 `required_gates` 派生：standard/heavy 默认 `review` 必需；trivial fast-path `required_gates=[]` 使四项全部 `not-required` 且 overall `available`。非必需项在报告中标记为 `not-required` 且不参与最终 `available` 判定。
 
 双层规则机制（不依赖 AI 记忆，门禁脚本强制执行）：
 
@@ -189,8 +189,20 @@ It must also support `environment-health --report <path>`. `confirm-plan` no lon
 environment health; after confirmation, `record-gate`, `approve-commit`, `commit`, and `testflight`
 must reject sessions whose recorded environment status is not `available` (and `checked_at` must be
 non-empty). `environment-health` itself may run after `confirm-plan`.
-Every session requires the `review` gate by default. Before confirmation, configure conditional
-gates when the task needs them (heavy-gate sessions must be started with `--level heavy`):
+
+Trivial fast-path (`--level trivial --trivial-kind docs|pod-patch`) writes `required_gates=[]`
+(`schema_version: 2`, `fast_path: true`); it does not require independent review, ticket,
+review-health, App launch, DebugBridge, or Figma — environment health reports all four checks
+`not-required` with overall `available`. It must still run `confirm-plan` → `environment-health`
+→ stage changes → `validate-trivial` → `approve-commit` → `commit`. `validate-trivial` records
+HEAD, index tree, per-file path/mode/type/content digest, and the validator result; `approve-commit`
+and `commit` recompute and reject on drift. Out-of-scope staged changes mark the session
+`requires-standard`/`requires-heavy` and freeze it (no approve/commit, no in-place conversion,
+no inherited evidence).
+
+For standard/heavy sessions, every session requires the `review` gate by default. Before
+confirmation, configure conditional gates when the task needs them (heavy-gate sessions must be
+started with `--level heavy`):
 
 ```bash
 # feature 带新 Figma UI（heavy）
@@ -321,13 +333,21 @@ required capabilities are derived from the session's `required_gates` (not the s
 | `figma_ui` | `app_launch`, `debugbridge`, `figma_rest_api` |
 | `ui_parity` | `app_launch`, `debugbridge`, `figma_rest_api` |
 
-`review` is always required. non-required capabilities are recorded as `not-required` and do
-not participate in the overall status. Pure dev-flow / script / documentation tasks that do not
-touch App, Figma, or DebugBridge require only `review` and do not need App launch, DebugBridge,
-or `figma-rest-api`. If any required result is `blocked` or `not-run`, stop before
-implementation, gate recording, commit approval, commit, or TestFlight, and report the exact
-environment blocker. Do not use a route-specific fallback to bypass this gate, except the
-built-in 审查角色 → `gstack-review` (`/review`) fallback recorded by
+`review` is required for every **standard/heavy** session. A legitimately trivial
+fast-path session (schema_version=2, `level=trivial`, `fast_path=true`, valid
+`trivial.kind`, and `required_gates=[]`) is the only exception: it requires no
+gates and all four capabilities are `not-required`. Empty `required_gates` is
+**not** auto-accepted on its own — the session must cross-match all trivial
+fields; a non-trivial session with explicitly empty `required_gates`, a missing
+`review` gate, or self-inconsistent trivial fields fails closed (no `available`,
+no approve). non-required capabilities are recorded as `not-required` and do
+not participate in the overall status. Pure dev-flow / script / documentation
+tasks that do not touch App, Figma, or DebugBridge require only `review` and do
+not need App launch, DebugBridge, or `figma-rest-api`. If any required result is
+`blocked` or `not-run`, stop before implementation, gate recording, commit
+approval, commit, or TestFlight, and report the exact environment blocker. Do
+not use a route-specific fallback to bypass this gate, except the built-in
+审查角色 → `gstack-review` (`/review`) fallback recorded by
 `scripts/review-health-probe.sh`.
 
 ### 6. Implement or review
@@ -437,9 +457,11 @@ dev-flow v1 不侵入项目版本结构。
 2. Every first-class route must pass `environment-health-check` after `confirm-plan` and before
    implementation, gate recording, commit approval, commit, or TestFlight. Required capabilities
    are derived from the session's `required_gates`; non-required capabilities are `not-required`
-   and do not participate in the overall status. `review` is always required; pure dev-flow /
-   script / documentation tasks require only `review` and do not need App launch, DebugBridge, or
-   Figma.
+   and do not participate in the overall status. standard/heavy sessions require `review` by
+   default; trivial fast-path (`--level trivial --trivial-kind`) writes `required_gates=[]`, all
+   four checks `not-required`, overall `available`, and does not need App launch, DebugBridge, or
+   Figma. Old/missing-schema or non-trivial empty-`required_gates` sessions must not auto-pass;
+   they fail closed and must re-open as standard/heavy.
 3. A blocked or unrun environment check cannot be bypassed by selecting another route or fallback,
    except 审查角色 health may fall back to `gstack-review` (`/review`) through
    `scripts/review-health-probe.sh`.
@@ -454,7 +476,10 @@ dev-flow v1 不侵入项目版本结构。
     stops the run, records `runtime-blocked` and the environment blocker, and forbids UI actions,
     unconfirmed simulator fallback, port-scan retries, and commit continuation.
 9. Review timeout, missing output, or `blocked` never becomes a pass.
-10. No commit before every required gate is recorded in the current session with its passing status.
+10. No commit before every required gate is recorded in the current session with its passing
+    status. Trivial fast-path (`required_gates=[]`) instead requires `validate-trivial` to pass
+    and the scope digest to match at `approve-commit` and `commit` (no independent review gate);
+    out-of-scope staged changes freeze the session as `requires-standard`/`requires-heavy`.
 11. `figma_ui` requires G0-G12 all pass and `g6_validation=pass` with a bounded
     `g6_validation_report`; `review` requires `pass`; `runtime` requires `runtime-verified`; and
     configured `ui_parity` requires `accepted` with matching authorization and acceptance reports.

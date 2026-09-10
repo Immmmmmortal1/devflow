@@ -260,7 +260,7 @@ print("OK: prod-mode ignores HEALTH_CMD overrides")
 PY
 
 # ── 用例 5：stale env（checked_at < confirmed_at → 深度防御拒绝）──
-run_for stale start --type feature --level trivial --task "stale env" >/dev/null
+run_for stale start --type feature --level standard --task "stale env" >/dev/null
 run_for stale confirm-plan >/dev/null
 # 手动构造 state：env available 但 checked_at 远早于 confirmed_at
 /usr/bin/python3 - "$TMP_ROOT/.dev-flow/sessions/stale.json" <<'PY'

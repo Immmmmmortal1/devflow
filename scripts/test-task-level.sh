@@ -16,7 +16,7 @@ trap '/bin/rm -rf -- "$TMP_ROOT"' EXIT
 printf 'base\n' > "$TMP_ROOT/base.txt"
 /usr/bin/git -C "$TMP_ROOT" add base.txt
 /usr/bin/git -C "$TMP_ROOT" commit -qm "init"
-printf '.dev-flow/\n' > "$TMP_ROOT/.gitignore"
+printf '.dev-flow/\nbin/\n' > "$TMP_ROOT/.gitignore"
 /usr/bin/git -C "$TMP_ROOT" add .gitignore
 /usr/bin/git -C "$TMP_ROOT" commit -qm "gitignore"
 
@@ -77,8 +77,8 @@ run_health_all() {
     /bin/bash "$ROOT/scripts/environment-health-check.sh" run "$@"
 }
 
-# 用例 1：trivial + review only → review_mcp available，其余 not-required
-run_for trivial start --type feature --level trivial --task "trivial task" >/dev/null
+# 用例 1：trivial docs → required_gates=[]，env 四项 not-required + available（fast-path）
+run_for trivial start --type feature --level trivial --trivial-kind docs --task "trivial docs" >/dev/null
 run_for trivial confirm-plan >/dev/null
 run_health_review_only trivial >/dev/null
 /usr/bin/python3 - "$TMP_ROOT/.dev-flow/sessions/trivial.json" <<'PY'
@@ -87,18 +87,28 @@ from pathlib import Path
 state = json.loads(Path(sys.argv[1]).read_text())
 checks = state["environment_health"]["checks"]
 assert state["level"] == "trivial", state
+assert state["schema_version"] == 2, state
+assert state["fast_path"] is True, state
+assert state["required_gates"] == [], state
+assert state["trivial"]["kind"] == "docs", state
 assert state["environment_health"]["status"] == "available", state["environment_health"]
-assert checks["review_mcp"]["status"] == "available", checks
+assert checks["review_mcp"]["status"] == "not-required", checks
 assert checks["app_launch"]["status"] == "not-required", checks
 assert checks["debugbridge"]["status"] == "not-required", checks
 assert checks["figma_rest_api"]["status"] == "not-required", checks
 assert state["confirmed_at"] is not None, state
 PY
 
-# 用例 2：trivial 也能 configure 加 runtime（能力模型：--level 不限制 gate 配置）
-run_for trivial-g start --type bug --level trivial --task "trivial gates" >/dev/null
-run_for trivial-g configure-gates --required review,runtime >/dev/null
-run_for trivial-g configure-gates --required review >/dev/null
+# 用例 2：trivial 禁止 configure-gates（fast-path 不走 gate 配置）
+run_for trivial-g start --type bug --level trivial --trivial-kind docs --task "trivial no cfg" >/dev/null
+if run_for trivial-g configure-gates --required review,runtime >/dev/null 2>&1; then
+  echo "FAIL: trivial configure-gates accepted" >&2
+  exit 1
+fi
+if run_for trivial-g configure-gates --required review >/dev/null 2>&1; then
+  echo "FAIL: trivial configure-gates accepted" >&2
+  exit 1
+fi
 
 # 用例 3：standard + review only → review_mcp available，app_launch not-required
 # （新模型：level 不直接决定 required checks；required_gates 决定。standard 默认只有 review gate。）
@@ -207,74 +217,36 @@ run_for std-gates configure-gates --required review,runtime >/dev/null
 run_for hvy-gates start --type feature --level heavy --task "heavy gates" >/dev/null
 run_for hvy-gates configure-gates --required review,runtime >/dev/null
 
-# 用例 9：trivial 完整链路：confirm → env → review pass → approve-commit
-run_for tri-full start --type feature --level trivial --task "trivial full chain" >/dev/null
+# 用例 9：trivial docs 完整 fast-path 链路：confirm → env → stage → validate-trivial → approve
+run_for tri-full start --type feature --level trivial --trivial-kind docs --task "trivial full chain" >/dev/null
 run_for tri-full confirm-plan >/dev/null
 run_health_review_only tri-full >/dev/null
-# 注入 review_ticket
-ticket_info="$(inject_review_ticket "tri-full" "agent/openai-reviewer" "sha256:3442e1b8bf278f94262e920076cfb201202958e4d5b5c43be1af25767202a7e9" "code-quality-review" "$TMP_ROOT/.dev-flow/sessions/tri-full.json" "$TMP_ROOT")"
-tt="${ticket_info% *}"
-td="${ticket_info#* }"
-ra_info="$(inject_result_artifact "tri-full" "$TMP_ROOT/.dev-flow/sessions/tri-full.json" "$TMP_ROOT" "pass" "test-run-tri" "test review pass")"
-ra_path="${ra_info% *}"
-ra_digest="${ra_info#* }"
-/usr/bin/python3 - "$TMP_ROOT" "tri-full" "$tt" "$td" "$ra_path" "$ra_digest" <<'PY'
-import json, sys, hashlib
+printf '# Notes\n\ntrivial docs\n' > "$TMP_ROOT/NOTES.md"
+/usr/bin/git -C "$TMP_ROOT" add NOTES.md
+run_for tri-full validate-trivial >/dev/null
+/usr/bin/python3 - "$TMP_ROOT/.dev-flow/sessions/tri-full.json" <<'PY'
+import json, sys
 from pathlib import Path
-root = Path(sys.argv[1])
-session_id = sys.argv[2]
-tt, td, ra_path, ra_digest = sys.argv[3:7]
-run_id = "test-run-tri"
-ref = f"test-host-ref-{run_id}"
-digest = "sha256:" + hashlib.sha256(f"test-handoff-{run_id}".encode()).hexdigest()
-(root / ".dev-flow" / "sessions" / f"review-{session_id}.json").write_text(json.dumps({
-    "producer": "code-review-workflow", "schema_version": 1,
-    "session_id": session_id, "gate": "review",
-    "status": "pass", "reviewer_result": "pass",
-    "evidence": "test review pass",
-    "selected_adapter": "agent/openai-reviewer",
-    "config_digest": "sha256:3442e1b8bf278f94262e920076cfb201202958e4d5b5c43be1af25767202a7e9",
-    "run_id": run_id, "diff_evidence": "sha256:c00eec6d0275ffaed16f6d289d32fc354209d51184195502ad3a2d6854d6e183",
-    "adapter_result_ref": ref, "adapter_result_digest": digest,
-    "ticket_token": tt, "ticket_digest": td,
-    "result_artifact": ra_path, "result_artifact_digest": ra_digest,
-}) + "\n")
+state = json.loads(Path(sys.argv[1]).read_text())
+tv = state["trivial_validation"]
+assert tv["result"] == "pass", tv
+assert tv["kind"] == "docs", tv
+assert tv["head"], tv
+assert tv["index_tree"], tv
+assert tv["scope_digest"].startswith("sha256:"), tv
+assert len(tv["entries"]) == 1, tv
+assert tv["entries"][0]["path"] == "NOTES.md", tv["entries"]
 PY
-run_for tri-full record-gate --name review --report "$TMP_ROOT/.dev-flow/sessions/review-tri-full.json" >/dev/null
 run_for tri-full approve-commit >/dev/null
 
 # 用例 10：环境门禁后移——confirm-plan 不要求 environment-health；confirm 后未跑 env 时
-# record-gate/approve-commit/commit/testflight 失败；跑 env 后恢复
-run_for noenv start --type feature --level trivial --task "no env" >/dev/null
+# validate-trivial/approve-commit/commit/testflight 失败；跑 env 后恢复（trivial 无 review gate）
+run_for noenv start --type feature --level trivial --trivial-kind docs --task "no env" >/dev/null
 run_for noenv confirm-plan >/dev/null
-# 注入 review_ticket（env-health 已跑）
-ticket_info="$(inject_review_ticket "noenv" "agent/openai-reviewer" "sha256:3442e1b8bf278f94262e920076cfb201202958e4d5b5c43be1af25767202a7e9" "code-quality-review" "$TMP_ROOT/.dev-flow/sessions/noenv.json" "$TMP_ROOT")"
-tt_noenv="${ticket_info% *}"
-td_noenv="${ticket_info#* }"
-ra_noenv="$(inject_result_artifact "noenv" "$TMP_ROOT/.dev-flow/sessions/noenv.json" "$TMP_ROOT" "pass" "test-run-noenv" "test review pass")"
-ra_noenv_path="${ra_noenv% *}"
-ra_noenv_digest="${ra_noenv#* }"
-/usr/bin/python3 - "$TMP_ROOT/.dev-flow/sessions/review-noenv.json" "noenv" "$tt_noenv" "$td_noenv" "$ra_noenv_path" "$ra_noenv_digest" <<'PY'
-import json, sys, hashlib
-from pathlib import Path
-run_id = "test-run-noenv"
-ref = f"test-host-ref-{run_id}"
-digest = "sha256:" + hashlib.sha256(f"test-handoff-{run_id}".encode()).hexdigest()
-Path(sys.argv[1]).write_text(json.dumps({
-    "producer": "code-review-workflow", "schema_version": 1,
-    "session_id": sys.argv[2], "gate": "review",
-    "status": "pass", "reviewer_result": "pass",
-    "evidence": "test review pass",
-    "selected_adapter": "agent/openai-reviewer",
-    "config_digest": "sha256:3442e1b8bf278f94262e920076cfb201202958e4d5b5c43be1af25767202a7e9",
-    "run_id": run_id, "diff_evidence": "sha256:f0b0fe78ecd6ecaa19620c31274018b857ddc8f228d192aaa771d24990ea0eb5",
-    "adapter_result_ref": ref, "adapter_result_digest": digest,
-    "ticket_token": sys.argv[3], "ticket_digest": sys.argv[4],
-    "result_artifact": sys.argv[5], "result_artifact_digest": sys.argv[6],
-}) + "\n")
-PY
-if run_for noenv record-gate --name review --report "$TMP_ROOT/.dev-flow/sessions/review-noenv.json" >/dev/null 2>&1; then
-  echo "FAIL: record-gate passed without environment health after confirm" >&2
+printf '# Doc\n\nbody\n' > "$TMP_ROOT/DOC.md"
+/usr/bin/git -C "$TMP_ROOT" add DOC.md
+if run_for noenv validate-trivial >/dev/null 2>&1; then
+  echo "FAIL: validate-trivial passed without environment health after confirm" >&2
   exit 1
 fi
 if run_for noenv approve-commit >/dev/null 2>&1; then
@@ -290,11 +262,11 @@ if run_for noenv testflight >/dev/null 2>&1; then
   exit 1
 fi
 run_health_review_only noenv >/dev/null
-run_for noenv record-gate --name review --report "$TMP_ROOT/.dev-flow/sessions/review-noenv.json" >/dev/null
+run_for noenv validate-trivial >/dev/null
 run_for noenv approve-commit >/dev/null
 
 # 用例 11：confirm 前误跑 environment-health 失败；confirm 后重跑才成功
-run_for preenv start --type feature --level trivial --task "pre-confirm env" >/dev/null
+run_for preenv start --type feature --level trivial --trivial-kind docs --task "pre-confirm env" >/dev/null
 if run_health_review_only preenv >/dev/null 2>&1; then
   echo "FAIL: environment-health ran before confirm-plan" >&2
   exit 1

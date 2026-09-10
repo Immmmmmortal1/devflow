@@ -27,12 +27,20 @@ The required capabilities are derived from the session's `required_gates`:
 | `figma_ui` | `app_launch`, `debugbridge`, `figma_rest_api` |
 | `ui_parity` | `app_launch`, `debugbridge`, `figma_rest_api` |
 
-`review` is always required (every session needs code review). Pure dev-flow / script /
-documentation tasks that do not touch App, Figma, or DebugBridge require only `review` and do
-**not** need App launch, DebugBridge, or `figma-rest-api`. Review and Figma probes are
-independent; the App launch probe is independent; DebugBridge depends on App launch (when both
-are required, an App launch failure marks DebugBridge as `not-run` instead of probing). An App
-launch failure never short-circuits the review or Figma probes.
+`review` is required for every **standard/heavy** session. The only exception is a
+legitimately trivial fast-path session (schema_version=2, `level=trivial`,
+`fast_path=true`, a valid `trivial.kind`, and `required_gates=[]`), which needs
+no gates — all four capabilities are `not-required`. An explicitly empty
+`required_gates` is **not** auto-accepted on its own: the session must
+cross-match every trivial field, and a non-trivial session with empty
+`required_gates`, a missing `review` gate, or self-inconsistent trivial fields
+fails closed (it cannot obtain `available` and cannot be approved). Pure
+dev-flow / script / documentation tasks that do not touch App, Figma, or
+DebugBridge require only `review` and do **not** need App launch, DebugBridge,
+or `figma-rest-api`. Review and Figma probes are independent; the App launch
+probe is independent; DebugBridge depends on App launch (when both are
+required, an App launch failure marks DebugBridge as `not-run` instead of
+probing). An App launch failure never short-circuits the review or Figma probes.
 
 ## Checks
 

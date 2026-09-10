@@ -103,7 +103,7 @@ PY
 # trivial 全链路：start → env → confirm → review pass（之后可 approve-commit）
 setup_trivial_chain() {
   local session_id="$1"
-  run_for "$session_id" start --type feature --level trivial --task "$session_id" >/dev/null
+  run_for "$session_id" start --type feature --level standard --task "$session_id" >/dev/null
   run_for "$session_id" confirm-plan >/dev/null
   run_health_review_only "$session_id"
   write_review_pass "$session_id"
@@ -115,7 +115,7 @@ sha_of() {
 }
 
 # ---- 用例 1：start 打印两份规则到 stdout，state 记录 hash ----
-out="$(run_for basic start --type feature --level trivial --task "basic")"
+out="$(run_for basic start --type feature --level standard --task "basic")"
 printf '%s' "$out" | /usr/bin/grep -q "===== GLOBAL RULES" || { echo "FAIL: start did not print global rules" >&2; exit 1; }
 printf '%s' "$out" | /usr/bin/grep -q "===== PROJECT RULES" || { echo "FAIL: start did not print project rules" >&2; exit 1; }
 /usr/bin/python3 - "$TMP_ROOT/.dev-flow/sessions/basic.json" "$PROJECT_RULES" "$ROOT/rules/global-rules.md" <<'PY'
@@ -157,7 +157,7 @@ PY
 # ---- 用例 5：approve-commit 全局规则闭环：篡改拒批，read-rules 放行 ----
 setup_trivial_chain gclose
 # 全链路用覆盖的全局文件（setup 里用的是真实全局文件；此用例单独建链）
-run_for_g gchain start --type feature --level trivial --task "gchain" >/dev/null
+run_for_g gchain start --type feature --level standard --task "gchain" >/dev/null
 run_for_g gchain confirm-plan >/dev/null
 DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=gchain \
   DEV_FLOW_TEST_MODE=1 DEV_FLOW_GLOBAL_RULES_FILE="$FAKE_GLOBAL" \
@@ -182,7 +182,7 @@ import json, sys
 from pathlib import Path
 Path(sys.argv[1]).write_text(json.dumps({
     "session_id": "legacy", "active": True, "type": "feature", "task": "legacy",
-    "level": "trivial", "started_at": "2026-08-26T00:00:00Z",
+    "level": "standard", "started_at": "2026-08-26T00:00:00Z",
     "confirmed_at": None, "commit_approved_at": None, "ended_at": None,
     "required_gates": ["review"],
     "gate_results": {"review": {"status": "pending", "evidence": None, "recorded_at": None}},
@@ -207,13 +207,13 @@ import sys
 from pathlib import Path
 Path(sys.argv[1]).write_text("# big rules\n" + "x" * 5000 + "\n")
 PY
-out="$(run_for big start --type feature --level trivial --task "big" 2>&1)"
+out="$(run_for big start --type feature --level standard --task "big" 2>&1)"
 printf '%s' "$out" | /usr/bin/grep -q "WARNING: rules file truncated" || { echo "FAIL: no truncation warning for >4KB rules" >&2; exit 1; }
 
 # ---- 用例 9：多 session 隔离 ----
 printf '# shared project rules\n' > "$PROJECT_RULES"
-run_for sess-a start --type feature --level trivial --task "a" >/dev/null
-run_for sess-b start --type feature --level trivial --task "b" >/dev/null
+run_for sess-a start --type feature --level standard --task "a" >/dev/null
+run_for sess-b start --type feature --level standard --task "b" >/dev/null
 printf '\n# changed\n' >> "$PROJECT_RULES"
 run_for sess-a read-rules >/dev/null
 run_for sess-a configure-gates --required review >/dev/null
@@ -227,7 +227,7 @@ run_for sess-b configure-gates --required review >/dev/null
 # ---- 用例 10：全局规则缺失 → start 失败 ----
 if DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=noglobal \
   DEV_FLOW_TEST_MODE=1 DEV_FLOW_GLOBAL_RULES_FILE="$TMP_ROOT/nonexistent-global.md" \
-  /bin/bash "$ROOT/scripts/dev-flow-session.sh" start --type feature --level trivial --task "noglobal" >/dev/null 2>&1; then
+  /bin/bash "$ROOT/scripts/dev-flow-session.sh" start --type feature --level standard --task "noglobal" >/dev/null 2>&1; then
   echo "FAIL: start passed with missing global rules" >&2
   exit 1
 fi
@@ -242,7 +242,7 @@ fi
 TMP_C="$(/usr/bin/mktemp -d)"
 /bin/ln -s "$TMP_ROOT/.dev-flow" "$TMP_C/.dev-flow"
 if DEV_FLOW_PROJECT_ROOT="$TMP_C" DEV_FLOW_SESSION_ID=sym-c \
-  /bin/bash "$ROOT/scripts/dev-flow-session.sh" start --type feature --level trivial --task "sym" >/dev/null 2>&1; then
+  /bin/bash "$ROOT/scripts/dev-flow-session.sh" start --type feature --level standard --task "sym" >/dev/null 2>&1; then
   echo "FAIL: start passed with symlinked .dev-flow directory" >&2
   exit 1
 fi
@@ -250,7 +250,7 @@ fi
 
 # ---- 用例 13：rules.md 被替换为 symlink → 门禁拒绝 ----
 printf '# stable rules\n' > "$PROJECT_RULES"
-run_for sym-f start --type feature --level trivial --task "sym-f" >/dev/null
+run_for sym-f start --type feature --level standard --task "sym-f" >/dev/null
 /bin/mv "$PROJECT_RULES" "$TMP_ROOT/rules-real.md"
 /bin/ln -s "$TMP_ROOT/rules-real.md" "$PROJECT_RULES"
 if run_for sym-f configure-gates --required review >/dev/null 2>&1; then
@@ -261,7 +261,7 @@ fi
 /bin/mv "$TMP_ROOT/rules-real.md" "$PROJECT_RULES"
 
 # ---- 用例 14：项目规则变更后 environment-health 拒绝；read-rules 后恢复 ----
-run_for env-fresh start --type feature --level trivial --task "env-fresh" >/dev/null
+run_for env-fresh start --type feature --level standard --task "env-fresh" >/dev/null
 run_for env-fresh confirm-plan >/dev/null
 printf '\n# changed before health\n' >> "$PROJECT_RULES"
 if run_health_review_only env-fresh; then
@@ -301,7 +301,7 @@ state = json.loads(Path(sys.argv[1]).read_text())
 assert state.get("confirmed_at"), state
 assert state["gate_results"]["review"]["status"] == "pass", state["gate_results"]
 assert state["environment_health"]["status"] == "available", state["environment_health"]
-assert state.get("level") == "trivial", state
+assert state.get("level") == "standard", state
 assert state.get("task") == "env-fresh", state
 PY
 
@@ -309,7 +309,7 @@ PY
 printf '# prod rules\n' > "$PROJECT_RULES"
 DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=prod-ovr \
   DEV_FLOW_GLOBAL_RULES_FILE="$FAKE_GLOBAL" \
-  /bin/bash "$ROOT/scripts/dev-flow-session.sh" start --type feature --level trivial --task "prod-ovr" >/dev/null
+  /bin/bash "$ROOT/scripts/dev-flow-session.sh" start --type feature --level standard --task "prod-ovr" >/dev/null
 /usr/bin/python3 - "$TMP_ROOT/.dev-flow/sessions/prod-ovr.json" "$ROOT/rules/global-rules.md" <<'PY'
 import json, sys
 from pathlib import Path
@@ -318,7 +318,7 @@ assert state["rules"]["global"]["path"] == sys.argv[2], state["rules"]["global"]
 PY
 
 # ---- 用例 18：environment-health-check.sh 成功时 stdout 回带项目规则 ----
-run_for env-echo start --type feature --level trivial --task "env-echo" >/dev/null
+run_for env-echo start --type feature --level standard --task "env-echo" >/dev/null
 run_for env-echo confirm-plan >/dev/null
 out="$(DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=env-echo \
   DEV_FLOW_TEST_MODE=1 \
@@ -329,7 +329,7 @@ printf '%s' "$out" | /usr/bin/grep -q "===== PROJECT RULES" || { echo "FAIL: hea
 # ---- 用例 19：跨项目复用会话 → 门禁拒绝 + read-rules 拒绝重绑 ----
 TMP_B="$(/usr/bin/mktemp -d)"
 /bin/mkdir -p "$TMP_B/.dev-flow/sessions"
-run_for xproj start --type feature --level trivial --task "xproj" >/dev/null
+run_for xproj start --type feature --level standard --task "xproj" >/dev/null
 /bin/cp "$TMP_ROOT/.dev-flow/sessions/xproj.json" "$TMP_B/.dev-flow/sessions/xproj.json"
 if DEV_FLOW_PROJECT_ROOT="$TMP_B" DEV_FLOW_SESSION_ID=xproj \
   /bin/bash "$ROOT/scripts/dev-flow-session.sh" configure-gates --required review 2>"$TMP_B/err" >/dev/null; then

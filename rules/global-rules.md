@@ -18,6 +18,12 @@
 - 最小化 diff，只改必要部分；不顺手重构无关代码。
 - 提交前必须运行相关测试并确认通过，禁止只做多静态检查就宣称完成。
 - 每个改动完成后保持工作区干净（commit 后再开始下一项）。
+- **trivial fast-path 边界**：`--level trivial --trivial-kind docs|pod-patch` 是绕过独立 review 的
+  轻量通道，仅限纯文档（`.md`/`.markdown` 或根目录精确 `README`/`CHANGELOG`/`LICENSE`）或单 Pod
+  依赖 patch 版本递增（同 major/minor、patch+1）。超界（控制面/逻辑/多文件/非纯文档/非纯 pod-patch/
+  delete/rename/symlink/binary 等）必须重开 standard/heavy，不得原地转换或继承证据。
+  trivial 会话 `required_gates=[]`、禁止 `configure-gates`；仍需 confirm-plan → environment-health
+  → `validate-trivial` → approve-commit → commit，且 digest 漂移即拒绝。
 
 ## 验证纪律
 

@@ -96,7 +96,7 @@ PY
 }
 
 # ---- 用例 1：无 ticket 的报告被拒 ----
-run_for t1 start --type feature --level trivial --task "no ticket" >/dev/null
+run_for t1 start --type feature --level standard --task "no ticket" >/dev/null
 run_for t1 confirm-plan >/dev/null
 run_env_health t1
 write_report "$TMP_ROOT/.dev-flow/sessions/r1.json" t1 pass
@@ -106,7 +106,7 @@ fi
 echo "OK: report without ticket rejected"
 
 # ---- 用例 2：伪造 ticket_token 被拒 ----
-run_for t2 start --type feature --level trivial --task "fake token" >/dev/null
+run_for t2 start --type feature --level standard --task "fake token" >/dev/null
 run_for t2 confirm-plan >/dev/null
 run_env_health t2
 t2_info="$(inject_review_ticket t2 agent/openai-reviewer sha256:2b01d7b4b229a03b2d83f7fa596ad4edec487b26fa0741708df1e4aff8c3f54e code-quality-review "$TMP_ROOT/.dev-flow/sessions/t2.json" "$TMP_ROOT")"
@@ -118,7 +118,7 @@ fi
 echo "OK: fake ticket_token rejected"
 
 # ---- 用例 3：已消费的 ticket 被拒 ----
-run_for t3 start --type feature --level trivial --task "consumed" >/dev/null
+run_for t3 start --type feature --level standard --task "consumed" >/dev/null
 run_for t3 confirm-plan >/dev/null
 run_env_health t3
 t3_info="$(inject_review_ticket t3 agent/openai-reviewer sha256:2b01d7b4b229a03b2d83f7fa596ad4edec487b26fa0741708df1e4aff8c3f54e code-quality-review "$TMP_ROOT/.dev-flow/sessions/t3.json" "$TMP_ROOT")"
@@ -134,7 +134,7 @@ fi
 echo "OK: consumed ticket rejected (must re-issue)"
 
 # ---- 用例 4：adapter 不匹配的 ticket 被拒 ----
-run_for t4 start --type feature --level trivial --task "adapter mismatch" >/dev/null
+run_for t4 start --type feature --level standard --task "adapter mismatch" >/dev/null
 run_for t4 confirm-plan >/dev/null
 run_env_health t4
 # 用 mcp/orchestrator 签发 ticket，但 review_selection 绑定的是 agent/openai-reviewer
@@ -149,7 +149,7 @@ fi
 echo "OK: adapter-mismatched ticket rejected"
 
 # ---- 用例 5：config_digest 不匹配的 ticket 被拒 ----
-run_for t5 start --type feature --level trivial --task "digest mismatch" >/dev/null
+run_for t5 start --type feature --level standard --task "digest mismatch" >/dev/null
 run_for t5 confirm-plan >/dev/null
 run_env_health t5
 t5_info="$(inject_review_ticket t5 agent/openai-reviewer sha256:5b3631e996419d23502d9fd2415536029921ba5d4cd2f049f8590b81aa300421 code-quality-review "$TMP_ROOT/.dev-flow/sessions/t5.json" "$TMP_ROOT")"
@@ -162,7 +162,7 @@ fi
 echo "OK: config_digest-mismatched ticket rejected"
 
 # ---- 用例 6：篡改 ticket artifact 后 digest 不匹配被拒 ----
-run_for t6 start --type feature --level trivial --task "tampered artifact" >/dev/null
+run_for t6 start --type feature --level standard --task "tampered artifact" >/dev/null
 run_for t6 confirm-plan >/dev/null
 run_env_health t6
 t6_info="$(inject_review_ticket t6 agent/openai-reviewer sha256:2b01d7b4b229a03b2d83f7fa596ad4edec487b26fa0741708df1e4aff8c3f54e code-quality-review "$TMP_ROOT/.dev-flow/sessions/t6.json" "$TMP_ROOT")"
@@ -185,7 +185,7 @@ fi
 echo "OK: tampered ticket artifact rejected"
 
 # ---- 用例 7：有效 ticket 的 pass 报告通过 ----
-run_for t7 start --type feature --level trivial --task "valid ticket" >/dev/null
+run_for t7 start --type feature --level standard --task "valid ticket" >/dev/null
 run_for t7 confirm-plan >/dev/null
 run_env_health t7
 t7_info="$(inject_review_ticket t7 agent/openai-reviewer sha256:2b01d7b4b229a03b2d83f7fa596ad4edec487b26fa0741708df1e4aff8c3f54e code-quality-review "$TMP_ROOT/.dev-flow/sessions/t7.json" "$TMP_ROOT")"

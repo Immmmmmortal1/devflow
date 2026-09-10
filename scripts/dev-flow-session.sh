@@ -16,17 +16,29 @@ dev_flow_rules_init
 usage() {
   cat <<'EOF'
 Usage:
-  scripts/dev-flow-session.sh start --type bug|feature|ui_review [--level trivial|standard|heavy] [--task "label"]
+  scripts/dev-flow-session.sh start --type bug|feature|ui_review --level trivial|standard|heavy [--task "label"] [--trivial-kind docs|pod-patch] [--dependency NAME] [--from-version x.y.z] [--to-version x.y.z]
   scripts/dev-flow-session.sh configure-gates --required <comma-separated gates>
   scripts/dev-flow-session.sh environment-health --report <path>
   scripts/dev-flow-session.sh record-gate --name figma_ui|review|runtime|ui_parity --report <path>
   scripts/dev-flow-session.sh confirm-plan [--task "label"]
+  scripts/dev-flow-session.sh validate-trivial
   scripts/dev-flow-session.sh approve-commit [--task "label"]
   scripts/dev-flow-session.sh commit --message "msg"
   scripts/dev-flow-session.sh testflight
   scripts/dev-flow-session.sh read-rules
   scripts/dev-flow-session.sh end
   scripts/dev-flow-session.sh status
+
+Trivial fast-path (--level trivial):
+  --level trivial 必须带 --trivial-kind docs|pod-patch。
+  pod-patch 还必须带 --dependency NAME --from-version x.y.z --to-version x.y.z
+  （from 绑定 HEAD 版本，to 绑定 index 版本；仅同 major/minor、patch 递增）。
+  trivial 会话写 required_gates=[]（schema v2, fast_path=true），禁止 configure-gates，
+  不需要独立 review/ticket/review-health/App/DebugBridge/Figma；环境门四项 not-required
+  且 overall available。仍需 confirm-plan → environment-health → stage 后 validate-trivial →
+  approve-commit → commit。validate-trivial 记录 HEAD/index-tree/path-mode-type-content digest；
+  approve 与 commit 前重算，漂移拒绝。超界（非纯文档/非纯 pod-patch）标记 requires-standard
+  或 requires-heavy 并冻结，不能 approve/commit。
 
 Rules note (双层规则机制):
   start/read-rules 打印全局(rules/global-rules.md)+项目(.dev-flow/rules.md)规则全文到 stdout；
@@ -43,10 +55,9 @@ Gate note:
   testflight 委托项目 fastlane：commit 完成且 HEAD 未漂移才执行
   <项目>/.dev-flow/testflight-command 中的命令并登记证据。
 Task level (--level, only meaningful for start):
-  --level 仍用于描述任务复杂度，但不再限制 gate 配置或环境门必需项。
-  环境门必需能力从 required_gates 派生（review 恒必需），非必需项标记 not-required。
-  trivial   - 文案/typo/纯逻辑微调；默认仅 review gate，环境门只 probe review_mcp。
-  standard  - 默认；普通 feature/bug；默认仅 review gate。
+  trivial   - 文档/typo 或 pod 依赖 patch 修补专用 fast-path；required_gates=[]，环境门四项
+              not-required；禁止 configure-gates；必须带 --trivial-kind 并经 validate-trivial 校验。
+  standard  - 默认；普通 feature/bug；required_gates=[review]。
   heavy     - 新 Figma UI / ui_review；需手动 configure-gates 加 runtime/figma_ui/ui_parity。
 EOF
 }
@@ -59,6 +70,10 @@ parse_common_args() {
   SESSION_TYPE=""
   TASK=""
   SESSION_LEVEL="standard"
+  TRIVIAL_KIND=""
+  POD_DEPENDENCY=""
+  FROM_VERSION=""
+  TO_VERSION=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --type)
@@ -71,6 +86,22 @@ parse_common_args() {
         ;;
       --level)
         SESSION_LEVEL="${2:-}"
+        shift 2
+        ;;
+      --trivial-kind)
+        TRIVIAL_KIND="${2:-}"
+        shift 2
+        ;;
+      --dependency)
+        POD_DEPENDENCY="${2:-}"
+        shift 2
+        ;;
+      --from-version)
+        FROM_VERSION="${2:-}"
+        shift 2
+        ;;
+      --to-version)
+        TO_VERSION="${2:-}"
         shift 2
         ;;
       -h|--help)
@@ -93,8 +124,10 @@ write_state() {
   local required_gates="${4:-}"
   local project_root="${5:-}"
   local level="${6:-}"
+  local trivial_kind="${7:-}"
+  local params_json="${8:-}"
   mkdir -p "$STATE_DIR"
-  /usr/bin/python3 - "$STATE_FILE" "$SESSION_ID" "$action" "$session_type" "$task" "$required_gates" "$(now_utc)" "$project_root" "$level" "$ROOT/.dev-flow" "$SOURCE_ROOT" <<'PY'
+  /usr/bin/python3 - "$STATE_FILE" "$SESSION_ID" "$action" "$session_type" "$task" "$required_gates" "$(now_utc)" "$project_root" "$level" "$trivial_kind" "$params_json" "$ROOT/.dev-flow" "$SOURCE_ROOT" <<'PY'
 import hashlib
 import json
 import os
@@ -110,25 +143,51 @@ required_gates_arg = sys.argv[6]
 timestamp = sys.argv[7]
 project_root = sys.argv[8]
 level = sys.argv[9]
-trusted_root = sys.argv[10]
-source_root = sys.argv[11]
+trivial_kind = sys.argv[10]
+params_json = sys.argv[11]
+trusted_root = sys.argv[12]
+source_root = sys.argv[13]
 sys.path.insert(0, os.path.join(source_root, 'scripts', 'lib'))
 from atomic_json_write import safe_atomic_write_json
+from trivial_session import resolve_required_gates
 
 all_gates = ("figma_ui", "review", "runtime", "ui_parity")
 required_gates = [item for item in required_gates_arg.split(",") if item]
-if action == "start" and not required_gates:
-    required_gates = ["review"]
+
+# trivial fast-path 参数解析
+try:
+    trivial_params = json.loads(params_json) if params_json else {}
+except json.JSONDecodeError:
+    trivial_params = {}
+
+# trivial 必须显式 required_gates=[]；standard/heavy 默认 [review]。
+# 旧/缺 schema 或非 trivial 空 gates 不能自动放行：start 时若 level 非 trivial 却得到空
+# required_gates，fail closed（要求显式 configure 或重开 standard/heavy）。
+if action == "start":
+    if level == "trivial":
+        required_gates = []  # trivial 显式空 gates
+    else:
+        if not required_gates:
+            required_gates = ["review"]
+else:
+    # 非 start 命令：空 required_gates 不补默认（configure-gates 自带校验）
+    if not required_gates and action != "configure-gates":
+        # 读取现有 state 时由调用方控制；此处仅对显式传入做校验
+        pass
+
 if any(item not in all_gates for item in required_gates):
     raise SystemExit("Unknown gate. Use figma_ui, review, runtime, or ui_parity.")
-if action in ("start", "configure-gates") and "review" not in required_gates:
-    raise SystemExit("The review gate is required for every dev-flow commit session.")
+# trivial fast-path：review 不再恒必需；仅 standard/heavy 要求 review 在 required_gates
+is_trivial = (action == "start" and level == "trivial")
+if not is_trivial:
+    if action in ("start", "configure-gates") and "review" not in required_gates:
+        raise SystemExit("The review gate is required for every non-trivial dev-flow commit session.")
 if len(set(required_gates)) != len(required_gates):
     raise SystemExit("Duplicate required gate.")
 
 default_gate_results = {
     "figma_ui": {"status": "not-required", "evidence": None, "recorded_at": None},
-    "review": {"status": "pending", "evidence": None, "recorded_at": None},
+    "review": {"status": "not-required", "evidence": None, "recorded_at": None},
     "runtime": {"status": "not-required", "evidence": None, "recorded_at": None},
     "ui_parity": {"status": "not-required", "evidence": None, "recorded_at": None},
 }
@@ -153,15 +212,39 @@ if level and level not in VALID_LEVELS:
 
 
 if action == "start":
+    # trivial fast-path 参数约束
+    if level == "trivial":
+        if trivial_kind not in ("docs", "pod-patch"):
+            raise SystemExit(
+                "start --level trivial requires --trivial-kind docs|pod-patch"
+            )
+        if trivial_kind == "pod-patch":
+            dep = trivial_params.get("dependency", "")
+            fv = trivial_params.get("from_version", "")
+            tv = trivial_params.get("to_version", "")
+            if not dep or not fv or not tv:
+                raise SystemExit(
+                    "start --level trivial --trivial-kind pod-patch requires "
+                    "--dependency NAME --from-version x.y.z --to-version x.y.z"
+                )
+    else:
+        # 非 trivial 不允许带 trivial-kind（避免误用）
+        if trivial_kind:
+            raise SystemExit(
+                f"--trivial-kind is only valid with --level trivial (got level={level})"
+            )
     data = {
         "session_id": session_id,
+        "schema_version": 2,
         "active": True,
         "type": session_type,
         "task": task,
         "level": level,
+        "fast_path": (level == "trivial"),
         "started_at": timestamp,
         "confirmed_at": None,
         "commit_approved_at": None,
+        "approved_scope": None,
         "ended_at": None,
         "required_gates": required_gates,
         "gate_results": make_gate_results(required_gates),
@@ -170,7 +253,13 @@ if action == "start":
             "checked_at": None,
             "checks": {},
         },
+        "trivial_validation": None,
     }
+    if level == "trivial":
+        data["trivial"] = {
+            "kind": trivial_kind,
+            "params": trivial_params,
+        }
     # 双层规则机制：start 必须记录全局+项目规则的 path/sha256/read_at。
     # 路径经环境变量传入（shell 侧已校验全局文件存在、项目模板已创建）。
     rules_block = {}
@@ -188,6 +277,8 @@ if action == "start":
 elif action == "configure-gates":
     if not data.get("active"):
         raise SystemExit("No active dev-flow session. Run start first.")
+    if data.get("fast_path") or data.get("level") == "trivial":
+        raise SystemExit("configure-gates is forbidden for trivial fast-path sessions; re-open as standard/heavy.")
     if data.get("confirmed_at"):
         raise SystemExit("Required gates cannot change after plan confirmation.")
     # 能力模型：required_gates 决定必需环境能力，不再按 --level 限制 gate 配置
@@ -241,25 +332,73 @@ elif action == "approve-commit":
     checked_at = data.get("environment_health", {}).get("checked_at")
     if not isinstance(checked_at, str) or not checked_at.strip():
         raise SystemExit("Environment health checked_at is missing; run environment-health-check.sh first.")
-    required = data.get("required_gates", ["review"])
-    results = data.get("gate_results", {})
-    expected = {
-        "figma_ui": "pass",
-        "review": "pass",
-        "runtime": "runtime-verified",
-        "ui_parity": "accepted",
-    }
-    blocked = []
-    for gate in required:
-        actual = results.get(gate, {}).get("status")
-        if actual != expected[gate]:
-            blocked.append(f"{gate}={actual or 'missing'} (requires {expected[gate]})")
-    if blocked:
-        raise SystemExit("Required gate(s) unresolved: " + ", ".join(blocked))
-    data["commit_approved_at"] = timestamp
-    data["session_id"] = session_id
-    if task:
-        data["task"] = task
+    # 冻结态（trivial 超界被标记 requires-standard/heavy）禁止 approve
+    frozen_status = (data.get("trivial_validation") or {}).get("escalation")
+    if frozen_status in ("requires-standard", "requires-heavy"):
+        raise SystemExit(
+            f"session is frozen ({frozen_status}); re-open as standard/heavy. "
+            "Evidence is not inherited."
+        )
+    # 一致性交叉校验：只有合法 trivial（schema2+level+fast_path+kind+空 gates 配套）
+    # 才允许空 gates 走 trivial 分支；非 trivial 显式空 gates / 缺 review / 字段自相矛盾
+    # → resolve_required_gates fail closed（不可 approve）。避免仅靠可篡改的单一字段。
+    required, is_trivial = resolve_required_gates(data)
+    if is_trivial:
+        # trivial fast-path：不要求 review gate，但要求 validate-trivial 已通过且 digest 未漂移
+        tv = data.get("trivial_validation")
+        if not tv or tv.get("result") != "pass":
+            raise SystemExit("Trivial fast-path requires validate-trivial to pass before approve-commit.")
+        # 重算 digest，比对漂移；同时校验工作树仍干净（validate 后变 dirty/untracked 也拒绝）
+        from trivial_scope_validator import compute_digest_only, check_clean_worktree
+        if project_root:
+            clean_ok, clean_reason = check_clean_worktree(project_root)
+            if not clean_ok:
+                raise SystemExit(
+                    "Worktree not clean since validate-trivial: " + clean_reason
+                )
+            current = compute_digest_only(project_root)
+            if current.get("scope_digest") != tv.get("scope_digest"):
+                raise SystemExit(
+                    "Trivial scope digest drifted since validate-trivial; re-run validate-trivial."
+                )
+            if current.get("head") != tv.get("head") or current.get("index_tree") != tv.get("index_tree"):
+                raise SystemExit(
+                    "Trivial staged state drifted since validate-trivial; re-run validate-trivial."
+                )
+        # 批准时绑定 approved scope digest/head/index-tree（issue #3）：
+        # commit 时必须同时比对 current == trivial_validation == approved_scope 三者一致，
+        # 防止 revalidate 后用旧 approval 提交不同 scope。
+        data["commit_approved_at"] = timestamp
+        data["approved_scope"] = {
+            "scope_digest": current.get("scope_digest"),
+            "head": current.get("head"),
+            "index_tree": current.get("index_tree"),
+            "approved_at": timestamp,
+        }
+        data["session_id"] = session_id
+        if task:
+            data["task"] = task
+    else:
+        # standard/heavy：gate 校验。required 已由 resolve_required_gates 交叉校验
+        #（非 trivial 必含 review，显式空 gates 已在 resolve 阶段被拒）。
+        results = data.get("gate_results", {})
+        expected = {
+            "figma_ui": "pass",
+            "review": "pass",
+            "runtime": "runtime-verified",
+            "ui_parity": "accepted",
+        }
+        blocked = []
+        for gate in required:
+            actual = results.get(gate, {}).get("status")
+            if actual != expected[gate]:
+                blocked.append(f"{gate}={actual or 'missing'} (requires {expected[gate]})")
+        if blocked:
+            raise SystemExit("Required gate(s) unresolved: " + ", ".join(blocked))
+        data["commit_approved_at"] = timestamp
+        data["session_id"] = session_id
+        if task:
+            data["task"] = task
 elif action == "end":
     if not data:
         data = {"session_id": session_id, "active": False}
@@ -376,6 +515,7 @@ trusted_root = sys.argv[5]
 source_root = sys.argv[6]
 sys.path.insert(0, os.path.join(source_root, 'scripts', 'lib'))
 from atomic_json_write import safe_atomic_write_json
+from trivial_session import resolve_required_gates
 
 if not state_path.exists():
     raise SystemExit("No active dev-flow session. Run start first.")
@@ -386,6 +526,10 @@ if not state.get("active"):
 # confirm 前误跑会被拒绝，防止 confirm 前的 env 被 confirm 后复用
 if not state.get("confirmed_at"):
     raise SystemExit("Environment health can only run after confirm-plan. Run confirm-plan first.")
+# 一致性交叉校验：合法 trivial 才允许空 gates（四项 not-required）；非 trivial 显式空
+# gates / 缺 review / 字段自相矛盾 → resolve fail closed（不可获得 available）。
+# 旧 session 缺 required_gates → 回退 ["review"]（与原行为一致）。
+gates, _is_trivial = resolve_required_gates(state)
 # REPORT_FILE 现在使用系统临时目录（不在 STATE_DIR 内），
 # 路径位置不再作为防伪依据；改为依赖 producer/schema_version/session_id 内容校验。
 report = json.loads(report_path.read_text())
@@ -409,7 +553,8 @@ valid_statuses = ("available", "blocked", "not-run", "not-required")
 if any(checks[name].get("status") not in valid_statuses for name in all_check_keys):
     raise SystemExit("Environment report contains an invalid check status.")
 
-# 从 state.required_gates 派生 required capabilities（与环境探针同一映射）。
+# 从 resolve_required_gates 派生 required capabilities（与环境探针同一映射）。
+# 已交叉校验：非 trivial 必含 review，显式空 gates 已被拒，自相矛盾已被拒。
 gate_to_caps = {
     "review": {"review_mcp"},
     "runtime": {"app_launch", "debugbridge"},
@@ -417,7 +562,7 @@ gate_to_caps = {
     "ui_parity": {"app_launch", "debugbridge", "figma_rest_api"},
 }
 required_caps = set()
-for gate in state.get("required_gates", ["review"]):
+for gate in gates:
     required_caps |= gate_to_caps.get(gate, set())
 
 # 严格契约：required capability 必须 available 才总 available；
@@ -1289,6 +1434,75 @@ print(state_path)
 PY
 }
 
+# validate-trivial：对暂存区做严格范围校验，记录 HEAD/index-tree/path-mode-type/content
+# digest 与校验结果到 state.trivial_validation。超界标记 requires-standard/heavy 并冻结，
+# 不原地转换、不继承证据；approve/commit 前重算 digest，漂移拒绝。
+validate_trivial() {
+  mkdir -p "$STATE_DIR"
+  /usr/bin/python3 - "$STATE_FILE" "$SESSION_ID" "$(now_utc)" "$ROOT" "$ROOT/.dev-flow" "$SOURCE_ROOT" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+state_path = Path(sys.argv[1])
+session_id = sys.argv[2]
+timestamp = sys.argv[3]
+project_root = Path(sys.argv[4])
+trusted_root = Path(sys.argv[5])
+source_root = sys.argv[6]
+sys.path.insert(0, os.path.join(source_root, 'scripts', 'lib'))
+from atomic_json_write import safe_atomic_write_json
+from trivial_session import resolve_required_gates
+from trivial_scope_validator import validate
+
+if not state_path.exists():
+    raise SystemExit("No active dev-flow session. Run start first.")
+state = json.loads(state_path.read_text())
+if not state.get("active"):
+    raise SystemExit("No active dev-flow session. Run start first.")
+# 一致性交叉校验：只有合法 trivial（schema2+level+fast_path+kind+空 gates 配套）才允许
+# validate-trivial；自相矛盾（如 level=trivial 但 required_gates!=[]、fast_path=True 但
+# level=standard）→ resolve fail closed，不原地转 standard/heavy，不继承证据。
+_, is_trivial = resolve_required_gates(state)
+if not is_trivial:
+    raise SystemExit("validate-trivial is only for legitimately trivial fast-path sessions; re-open as standard/heavy.")
+if not state.get("confirmed_at"):
+    raise SystemExit("Plan is not confirmed. Run confirm-plan first.")
+
+# 冻结态拒绝重新 validate（不原地转换、不继承证据）
+existing = state.get("trivial_validation") or {}
+if existing.get("escalation") in ("requires-standard", "requires-heavy"):
+    raise SystemExit(
+        f"session is frozen ({existing['escalation']}); re-open as standard/heavy. "
+        "Evidence is not inherited."
+    )
+
+trivial = state.get("trivial") or {}
+kind = trivial.get("kind")
+params = trivial.get("params") or {}
+
+result = validate(str(project_root), kind, params)
+result["validated_at"] = timestamp
+state["trivial_validation"] = result
+# 每次 validate-trivial（无论成功/失败/重跑）都清除旧 commit approval（issue #3）：
+# 防止「validate A → approve → stage B → revalidate B → commit」用旧 approval 提交 B。
+# 语义：每次 validate 后必须重新 approve。失败 validation 同样清除，不保留旧 approval。
+state["commit_approved_at"] = None
+state["approved_scope"] = None
+state["session_id"] = session_id
+safe_atomic_write_json(trusted_root, state_path, state)
+print(state_path)
+if result["result"] != "pass":
+    esc = result.get("escalation") or ""
+    print(
+        f"validate-trivial: {result['result']} ({esc}): {result['reason']}",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+PY
+}
+
 # commit：收口提交动作。approve-commit 已批 → 校验暂存区 → git commit → 记录 hash。
 # 提交后重置 testflight 状态（新 commit 使旧构建证据失效）。
 record_commit() {
@@ -1310,6 +1524,7 @@ trusted_root = sys.argv[5]
 source_root = sys.argv[6]
 sys.path.insert(0, os.path.join(source_root, 'scripts', 'lib'))
 from atomic_json_write import safe_atomic_write_json
+from trivial_session import resolve_required_gates
 # message 原样传给 git commit（不 strip），仅做非空与长度校验（≤200，与 state 规格一致），
 # 保证 state 记录值与实际提交完全一致
 message = os.environ.get("DEV_FLOW_COMMIT_MESSAGE", "")
@@ -1325,6 +1540,57 @@ if not state.get("active"):
     raise SystemExit("No active dev-flow session. Run start first.")
 if not state.get("commit_approved_at"):
     raise SystemExit("Commit is not approved. Run approve-commit first.")
+
+# 一致性交叉校验：合法 trivial 才走 fast-path 绑定校验；非 trivial 显式空 gates /
+# 字段自相矛盾 → resolve fail closed（深度防御，approve 已先行校验）。
+_, is_trivial = resolve_required_gates(state)
+
+if is_trivial:
+    # trivial fast-path commit 绑定：HEAD + index tree + 文件元数据/content digest
+    tv = state.get("trivial_validation") or {}
+    # 冻结态禁止 commit
+    if tv.get("escalation") in ("requires-standard", "requires-heavy"):
+        raise SystemExit(f"session is frozen ({tv['escalation']}); re-open as standard/heavy.")
+    # commit-blocked 禁止重复 commit（不自动 reset/revert）
+    if state.get("commit_blocked"):
+        raise SystemExit(
+            "session is in commit-blocked state; resolve the blocked commit manually "
+            "(see state.commit_blocked) before re-running commit"
+        )
+    if tv.get("result") != "pass":
+        raise SystemExit("Trivial fast-path requires validate-trivial to pass before commit.")
+    # commit 前重算 digest，漂移拒绝；同时校验工作树仍干净
+    from trivial_scope_validator import compute_digest_only, check_clean_worktree
+    clean_ok, clean_reason = check_clean_worktree(str(project_root))
+    if not clean_ok:
+        raise SystemExit("Worktree not clean before commit: " + clean_reason)
+    current = compute_digest_only(str(project_root))
+    # 三方比对（issue #3）：current == trivial_validation == approved_scope 必须一致。
+    # 防止「validate A → approve → stage B → revalidate B → commit」用旧 approval 提交 B。
+    if current.get("scope_digest") != tv.get("scope_digest"):
+        raise SystemExit(
+            "Trivial scope digest drifted since validate-trivial; re-run validate-trivial then approve-commit."
+        )
+    if current.get("head") != tv.get("head") or current.get("index_tree") != tv.get("index_tree"):
+        raise SystemExit(
+            "Trivial staged state drifted since validate-trivial; re-run validate-trivial then approve-commit."
+        )
+    approved_scope = state.get("approved_scope")
+    if not approved_scope:
+        raise SystemExit(
+            "Trivial fast-path has no approved_scope binding; re-run validate-trivial then approve-commit."
+        )
+    if approved_scope.get("scope_digest") != tv.get("scope_digest"):
+        raise SystemExit(
+            "Approved scope digest does not match trivial_validation; re-run validate-trivial then approve-commit."
+        )
+    if approved_scope.get("head") != tv.get("head") or approved_scope.get("index_tree") != tv.get("index_tree"):
+        raise SystemExit(
+            "Approved scope head/index_tree does not match trivial_validation; re-run validate-trivial then approve-commit."
+        )
+    # 记录期望值：commit 前的 HEAD 作为新 commit 的 expected parent，index tree 作为 expected tree
+    expected_parent = current["head"]
+    expected_tree = current["index_tree"]
 
 def run_git(args):
     # 小输出命令（rev-parse/diff --quiet）才用 capture_output
@@ -1371,6 +1637,32 @@ head = run_git(["rev-parse", "HEAD"])
 commit_hash = head.stdout.strip()
 if not commit_hash:
     raise SystemExit("git commit succeeded but HEAD is unreadable")
+
+# trivial fast-path：commit hook 可能改写 tree 或插入意外 parent。
+# 校验新 commit 的 parent == commit 前的 HEAD、新 commit 的 tree == commit 前 index tree。
+# 不符则记录 commit-blocked（实际 hash/parent/tree 和期望值），不自动 reset/revert，禁止重复 commit。
+if is_trivial:
+    actual_parent = run_git(["rev-parse", "HEAD^"]).stdout.strip()
+    actual_tree = run_git(["rev-parse", "HEAD^{tree}"]).stdout.strip()
+    if actual_parent != expected_parent or actual_tree != expected_tree:
+        state["commit_blocked"] = {
+            "commit_hash": commit_hash,
+            "expected_parent": expected_parent,
+            "actual_parent": actual_parent,
+            "expected_tree": expected_tree,
+            "actual_tree": actual_tree,
+            "blocked_at": timestamp,
+            "reason": "post-commit parent/tree mismatch (hook may have rewritten the commit)",
+        }
+        state["session_id"] = session_id
+        safe_atomic_write_json(trusted_root, state_path, state)
+        raise SystemExit(
+            f"commit-blocked: actual parent/tree does not match expected "
+            f"(parent {actual_parent[:12]} vs {expected_parent[:12]}, "
+            f"tree {actual_tree[:12]} vs {expected_tree[:12]}); "
+            "resolve manually, do not re-run commit"
+        )
+
 # git 会规范化提交信息（去首尾空白/空行等），state 必须记录实际提交内容而非入口输入
 msg_result = run_git(["log", "-1", "--pretty=%B"])
 if msg_result.returncode != 0:
@@ -1654,10 +1946,34 @@ case "$cmd" in
       echo "start requires --type bug|feature|ui_review" >&2
       exit 2
     fi
-    # --level 缺值拒绝（空字符串）；--level 仍用于描述任务复杂度，但不再限制 gate 配置
+    # --level 缺值拒绝（空字符串）；--level 用于描述任务复杂度并决定是否走 trivial fast-path
     if [[ -z "$SESSION_LEVEL" ]]; then
       echo "start --level requires a value (trivial|standard|heavy)" >&2
       exit 2
+    fi
+    # trivial fast-path 参数约束（shell 侧显式校验，Python 侧深度防御）
+    PARAMS_JSON=""
+    if [[ "$SESSION_LEVEL" == "trivial" ]]; then
+      if [[ -z "$TRIVIAL_KIND" ]]; then
+        echo "start --level trivial requires --trivial-kind docs|pod-patch" >&2
+        exit 2
+      fi
+      if [[ "$TRIVIAL_KIND" != "docs" && "$TRIVIAL_KIND" != "pod-patch" ]]; then
+        echo "start --trivial-kind requires docs|pod-patch" >&2
+        exit 2
+      fi
+      if [[ "$TRIVIAL_KIND" == "pod-patch" ]]; then
+        if [[ -z "$POD_DEPENDENCY" || -z "$FROM_VERSION" || -z "$TO_VERSION" ]]; then
+          echo "start --trivial-kind pod-patch requires --dependency NAME --from-version x.y.z --to-version x.y.z" >&2
+          exit 2
+        fi
+        PARAMS_JSON="$(/usr/bin/python3 -c 'import json,sys; print(json.dumps({"dependency":sys.argv[1],"from_version":sys.argv[2],"to_version":sys.argv[3]}))' "$POD_DEPENDENCY" "$FROM_VERSION" "$TO_VERSION")"
+      fi
+    else
+      if [[ -n "$TRIVIAL_KIND" ]]; then
+        echo "--trivial-kind is only valid with --level trivial" >&2
+        exit 2
+      fi
     fi
     # 双层规则机制第 1 层：start 硬读。全局规则缺失直接失败；项目规则缺失则建空模板
     if [[ ! -f "$DEV_FLOW_GLOBAL_RULES_FILE" ]]; then
@@ -1666,14 +1982,14 @@ case "$cmd" in
     fi
     dev_flow_rules_ensure_project_file
     rm -f "$STATE_DIR/$SESSION_ID.app-launch.json"
-    write_state "start" "$SESSION_TYPE" "$TASK" "review" "" "$SESSION_LEVEL"
+    write_state "start" "$SESSION_TYPE" "$TASK" "review" "" "$SESSION_LEVEL" "$TRIVIAL_KIND" "$PARAMS_JSON"
     dev_flow_rules_print "GLOBAL RULES" "$DEV_FLOW_GLOBAL_RULES_FILE"
     dev_flow_rules_print "PROJECT RULES" "$DEV_FLOW_PROJECT_RULES_FILE"
     ;;
   configure-gates)
     parse_gate_config_args "$@"
     dev_flow_rules_verify_project_fresh "$STATE_FILE"
-    write_state "configure-gates" "" "" "$REQUIRED_GATES" "" ""
+    write_state "configure-gates" "" "" "$REQUIRED_GATES" "" "" "" ""
     dev_flow_rules_print "PROJECT RULES" "$DEV_FLOW_PROJECT_RULES_FILE"
     ;;
   environment-health)
@@ -1693,7 +2009,13 @@ case "$cmd" in
     parse_common_args "$@"
     dev_flow_rules_verify_project_fresh "$STATE_FILE"
     # requirements index.json 在业务项目根（$ROOT），不是 devflow 仓库根（$SOURCE_ROOT）
-    write_state "confirm-plan" "" "$TASK" "" "$ROOT" ""
+    write_state "confirm-plan" "" "$TASK" "" "$ROOT" "" "" ""
+    dev_flow_rules_print "PROJECT RULES" "$DEV_FLOW_PROJECT_RULES_FILE"
+    ;;
+  validate-trivial)
+    dev_flow_rules_verify_project_fresh "$STATE_FILE"
+    dev_flow_verify_environment_health "$STATE_FILE"
+    validate_trivial
     dev_flow_rules_print "PROJECT RULES" "$DEV_FLOW_PROJECT_RULES_FILE"
     ;;
   approve-commit)
@@ -1702,7 +2024,7 @@ case "$cmd" in
     dev_flow_rules_verify_project_fresh "$STATE_FILE"
     dev_flow_rules_verify_global_fresh "$STATE_FILE"
     dev_flow_verify_environment_health "$STATE_FILE"
-    write_state "approve-commit" "" "$TASK" "" "" ""
+    write_state "approve-commit" "" "$TASK" "" "$ROOT" "" "" ""
     dev_flow_rules_print "PROJECT RULES" "$DEV_FLOW_PROJECT_RULES_FILE"
     ;;
   read-rules)
@@ -1730,7 +2052,7 @@ case "$cmd" in
     dev_flow_rules_print "PROJECT RULES" "$DEV_FLOW_PROJECT_RULES_FILE"
     ;;
   end)
-    write_state "end" "" "" "" "" ""
+    write_state "end" "" "" "" "" "" "" ""
     ;;
   status)
     if [[ -f "$STATE_FILE" ]]; then

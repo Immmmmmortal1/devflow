@@ -364,12 +364,17 @@ fi
 
 # 从当前 session state 读取 required_gates，派生 required capabilities。
 # 只有 required capability 才运行探针；非 required 标记 not-required，不参与总状态。
-caps_info="$(/usr/bin/python3 - "$STATE_FILE" <<'PY'
+# 一致性交叉校验：合法 trivial 才允许空 gates；非 trivial 显式空 gates / 缺 review /
+# 字段自相矛盾 → fail closed（不产出 available）。lib 路径由 dev_flow_load_paths 解析。
+caps_info="$(/usr/bin/python3 - "$STATE_FILE" "$DEV_FLOW_SCRIPTS_DIR/lib" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 state_path = Path(sys.argv[1])
+sys.path.insert(0, sys.argv[2])
+from trivial_session import resolve_required_gates
+
 if not state_path.exists():
     print("ERROR:no_active_dev_flow_session")
     raise SystemExit(0)
@@ -381,7 +386,15 @@ except (OSError, json.JSONDecodeError):
 if not state.get("active"):
     print("ERROR:no_active_dev_flow_session")
     raise SystemExit(0)
-gates = state.get("required_gates") or ["review"]
+# 一致性交叉校验：合法 trivial 才允许空 gates；非 trivial 显式空 gates /
+# 缺 review / trivial 字段自相矛盾 → fail closed（不产出 available）。
+# 旧 session 缺 required_gates → resolve 回退 ["review"]。
+try:
+    gates, _is_trivial = resolve_required_gates(state)
+except SystemExit as exc:
+    msg = str(exc) or "session gate consistency error"
+    print("ERROR:session_gate_inconsistent:" + msg.splitlines()[0][:200])
+    raise SystemExit(0)
 mapping = {
     "review": ("review_mcp",),
     "runtime": ("app_launch", "debugbridge"),
@@ -400,6 +413,7 @@ PY
 
 if [[ "$caps_info" == ERROR:* ]]; then
   echo "$caps_info" >&2
+  echo "Session gate state is inconsistent; re-open as standard/heavy or fix the session state." >&2
   echo "Run scripts/dev-flow-session.sh start --type bug|feature|ui_review before environment-health." >&2
   exit 1
 fi
@@ -411,15 +425,19 @@ needs_review=0
 needs_app_launch=0
 needs_debugbridge=0
 needs_figma=0
-IFS=',' read -r -a _caps_arr <<< "$required_caps_str"
-for _cap in "${_caps_arr[@]}"; do
-  case "$_cap" in
-    review_mcp) needs_review=1 ;;
-    app_launch) needs_app_launch=1 ;;
-    debugbridge) needs_debugbridge=1 ;;
-    figma_rest_api) needs_figma=1 ;;
-  esac
-done
+# trivial fast-path 时 required_caps_str 为空，_caps_arr 为空数组；
+# set -u 下空数组的 "${arr[@]}" 会报 unbound，故仅非空时循环
+if [[ -n "$required_caps_str" ]]; then
+  IFS=',' read -r -a _caps_arr <<< "$required_caps_str"
+  for _cap in "${_caps_arr[@]}"; do
+    case "$_cap" in
+      review_mcp) needs_review=1 ;;
+      app_launch) needs_app_launch=1 ;;
+      debugbridge) needs_debugbridge=1 ;;
+      figma_rest_api) needs_figma=1 ;;
+    esac
+  done
+fi
 
 debug_command="${DEV_FLOW_DEBUGBRIDGE_HEALTH_CMD:-}"
 if [[ -z "$debug_command" ]]; then
@@ -545,7 +563,9 @@ required_set = set(required_capabilities)
 if required_set:
     status = "available" if all(checks[c]["status"] == "available" for c in required_set) else "blocked"
 else:
-    status = "blocked"
+    # trivial fast-path（required_gates=[]）：四项能力均非必需且应为 not-required，
+    # 无需要 available 的能力，overall 状态为 available（与 record_environment 派生一致）。
+    status = "available"
 report = {
     "producer": "environment-health-check",
     "schema_version": 2,

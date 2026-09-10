@@ -81,7 +81,7 @@ else:
     }
 path.write_text(json.dumps({
     "session_id": session_id, "active": True, "type": "feature", "task": session_id,
-    "level": "trivial", "started_at": "2026-08-26T00:00:00Z",
+    "level": "standard", "started_at": "2026-08-26T00:00:00Z",
     "confirmed_at": None if confirmed == "null" else confirmed,
     "commit_approved_at": None, "ended_at": None,
     "required_gates": ["review"],

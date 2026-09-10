@@ -69,7 +69,10 @@ bash /path/to/devflow/scripts/dev-flow.sh environment-health run
 | `figma_ui` | `app_launch`, `debugbridge`, `figma_rest_api` |
 | `ui_parity` | `app_launch`, `debugbridge`, `figma_rest_api` |
 
-`review` 恒必需。非必需项在报告中标记为 `not-required`，不参与最终 `available` 判定。纯 dev-flow / 脚本 / 文档任务只需 `review`，不需要 App launch、DebugBridge 或 Figma。`--level` 仍用于描述任务复杂度，但不再决定环境门必需项。
+- **standard / heavy**：`required_gates=[review]`（默认），`review` 恒必需；非必需项在报告中标记为 `not-required`，不参与最终 `available` 判定。普通 feature/bug 只需 `review`，不需要 App launch、DebugBridge 或 Figma。
+- **trivial fast-path**（`--level trivial --trivial-kind docs|pod-patch`）：`required_gates=[]`，环境门四项全部 `not-required` 且 overall `available`；不走独立 review/ticket/review-health/App/DebugBridge/Figma。仍需 `confirm-plan` → `environment-health` → `stage` 后 `validate-trivial` → `approve-commit` → `commit`。
+
+`--level` 既描述任务复杂度，也决定是否走 trivial fast-path（trivial 必须 `--trivial-kind`）。详见下文 [Trivial fast-path](#trivial-fast-path)。
 
 本仓库是 skill / 脚本的源码真相源（source of truth）。`install-dev-flow.sh` 会把 skills 链到本机 `~/.codex/skills`、`~/.cursor/skills` 或 `~/.config/opencode/skills`。
 
@@ -184,14 +187,19 @@ Step1 分类、Step2 比对、Step3 修复复验都必须引用该段，不得�
 
 ```bash
 # 启动（按 DEV_FLOW_SESSION_ID → CODEX_THREAD_ID → CURSOR_CONVERSATION_ID 隔离）
-bash scripts/dev-flow-session.sh start --type feature|bug|ui_review --level trivial|standard|heavy --task "short label"
+# standard/heavy 默认 required_gates=[review]；trivial 必须带 --trivial-kind
+bash scripts/dev-flow-session.sh start --type feature|bug|ui_review --level trivial|standard|heavy --task "short label" [--trivial-kind docs|pod-patch]
 
 # 配置条件门禁后 confirm-plan（start → 分类/计划 → confirm；confirm 不要求环境门禁）
+# trivial 会话禁止 configure-gates；standard/heavy 在 confirm 前 configure 重型 gate
 bash scripts/dev-flow-session.sh configure-gates --required review,figma_ui,runtime
 bash scripts/dev-flow-session.sh confirm-plan --task "short label"
 
 # 环境检查在 confirm-plan 之后、实现之前跑（必需能力从 required_gates 派生；非必需项 not-required，不参与判定）
 bash scripts/environment-health-check.sh run
+
+# trivial fast-path 专用：stage 后做范围校验，记录 digest 供 approve/commit 漂移比对
+bash scripts/dev-flow-session.sh validate-trivial
 
 # 环境门禁 available 后 approve-commit / commit
 bash scripts/dev-flow-session.sh approve-commit --task "short label"
@@ -204,6 +212,14 @@ bash scripts/dev-flow-session.sh testflight
 
 bash scripts/dev-flow-session.sh end
 ```
+
+### Trivial fast-path
+
+`--level trivial` 是文档/pod-patch 修补专用轻量通道，绕过独立 review：
+
+- **docs**：仅普通文件新增/修改 `.md`/`.markdown`，或根目录精确 `README`/`CHANGELOG`/`LICENSE`（大小写敏感）。拒绝删除、rename、mode/type 变化、symlink、binary、submodule；优先拒绝控制面（`SKILL.md`、`AGENTS.md`、`.dev-flow/`、`rules/`、`scripts/`、`tests/`、`.github/workflows/`、CI/安全/发布/构建配置）。本仓库（devflow 源码）修改自身文档不能走 trivial。
+- **pod-patch**：声明仅交叉校验。`--from-version` 绑定 HEAD 版本，`--to-version` 绑定 index 版本；严格 `x.y.z`、同 major/minor、patch 递增。仅 `Podfile`/`Podfile.lock`：Podfile 仅目标依赖单行版本替换且除版本外一致；lockfile 只允许目标依赖版本引用（PODS/可选 DEPENDENCIES）、目标 SPEC CHECKSUMS 对、以及自动生成且严格绑定的 PODFILE CHECKSUM 对（Podfile SHA-1 from→to）；SPEC CHECKSUMS 与 PODFILE CHECKSUM 均为 40 位小写 SHA-1，拒绝短/超长/大写；HEAD/index PODFILE CHECKSUM 标量必须各恰好 1 条且分别等于 SHA-1(HEAD/index Podfile bytes)。禁止其他包版本/checksum、结构增删、`SPEC REPOS`/`EXTERNAL SOURCES`/`CHECKOUT OPTIONS`/`COCOAPODS` 变化。任何不确定 fail closed 并提示重开 standard。
+- **门禁**：仍需 `confirm-plan` → `environment-health`（四项 not-required 且 overall available）→ stage 后 `validate-trivial` → 用户 `approve-commit` → `commit`。`validate-trivial` 记录 HEAD/index-tree/path-mode-type/content digest；approve 与 commit 前重算，漂移拒绝。超界（非纯文档/非纯 pod-patch）标记 `requires-standard`/`requires-heavy` 并冻结，不能 approve/commit，不原地转换、不继承证据。
 
 Cursor 内禁止回退到共享 `local` session（见 `scripts/resolve-dev-flow-session-id.sh`）。
 
