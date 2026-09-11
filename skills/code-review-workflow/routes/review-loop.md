@@ -5,10 +5,10 @@ selected review route interprets it. It owns review iteration, not any domain's 
 
 ## Finding decisions
 
-For every finding, record exactly one:
+For every finding, classify it by axis and record exactly one decision:
 
 ```text
-fix | accept risk | not applicable
+finding → axis: spec | standards → fix | accept risk | not applicable
 ```
 
 For `fix`, change only confirmed scope, rerun the affected route validation, and run the next
@@ -21,7 +21,7 @@ evidence cannot be classified as risk acceptance by the agent.
 Start at the first post-edit review. One round is:
 
 ```text
-run selected route → invoke base review capability → classify findings
+run selected route → invoke base review capability → classify findings by axis
 → fix within scope → targeted validation
 ```
 
@@ -31,6 +31,8 @@ Record:
 Round: 1|2|3
 Review route:
 Review path: reviewer | mcp | fallback
+Spec verdict: pass | revise | blocked
+Standards verdict: pass | revise | blocked
 Route result: pass | revise | blocked
 Finding decisions:
 Validation rerun:
@@ -38,13 +40,14 @@ Validation rerun:
 
 ## Three-round stop gate
 
-After three consecutive rounds without meeting the selected route's acceptance criteria:
+After three consecutive rounds without meeting the selected route's acceptance criteria on
+**both** axes:
 
 - stop and do not enter `commit-gate`;
 - return `blocked`;
-- include rounds completed, unresolved findings, completed fixes, uncertain boundaries, and
-  options requiring human decision;
+- include rounds completed, unresolved findings (per axis), completed fixes, uncertain
+  boundaries, and options requiring human decision;
 - resume only after explicit human direction.
 
 Do not keep applying unbounded patches or infer risk acceptance from silence. A route may return
-`pass` only after its own criteria and this loop are satisfied.
+`pass` only after both axes (Spec and Standards) meet its own criteria and this loop is satisfied.

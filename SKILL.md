@@ -23,6 +23,24 @@ approved requirements → confirmed plan → implementation/review → runtime e
 
 This file owns orchestration only. Detailed procedures belong to the selected skills below.
 
+## Context pointer convention
+
+Skills use **context pointers** (links to reference files) for detailed templates and
+contracts. Progressive disclosure keeps each SKILL.md focused on execution order and hard stops,
+while references hold the full specification. Every pointer must:
+
+1. **State what the reference is** — a template, a contract, a definition set.
+2. **State when to read it** — the step or condition that triggers the read.
+
+Example: "Read [references/bug-repro-template.md](references/bug-repro-template.md) for the
+full contract (minimal repro, full scenario, allowed evidence, blocked handling)" — this tells
+the agent the reference is a contract and the trigger is the red-capable feedback loop step.
+
+Main Skills retain their execution order and hard stops. Long detailed content lives in
+references. Do not mass-move existing top-level SKILL.md long prose into references; only new
+contracts and templates are added as references. New references must be registered in
+`scripts/link-skills-common.sh` so they are installed alongside their parent skill.
+
 ## Global connection rule
 
 Dev-flow must not proactively close, exit, restart, or release the current MCP or DebugBridge

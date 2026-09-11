@@ -34,6 +34,15 @@ Reviewer request:
 - exact file/line or symbol
 - why it violates scope, requirements, or code behavior
 - concrete remediation
+- classify each finding as Spec or Standards axis (see parent skill Step 1a)
+
+Dual-axis report (mandatory in reviewer output):
+```text
+Spec verdict: pass | revise | blocked
+  - Spec findings: (list or none)
+Standards verdict: pass | revise | blocked
+  - Standards findings: (list or none)
+Overall result: pass | revise | blocked  (weakest axis)
 ```
 
 Required machine fields for an orchestrator request:

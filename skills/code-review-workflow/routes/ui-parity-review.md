@@ -89,11 +89,17 @@ Ask the independent reviewer to verify:
 
 ## Pass conditions
 
-- Independent reviewer verdict `pass` (or residual risks explicitly accepted by the human and
-  recorded via `review-loop`)
-- Diff limited to authorized parity repairs
-- Authorization, acceptance, verification, runtime, and current-session evidence are complete
-- No unresolved blocking evidence gaps listed above
+Report findings along the **Spec / Standards dual-axis** (see parent skill Step 1a):
+
+- **Spec**: independent reviewer verdict `pass` on the parity contract (or residual risks
+  explicitly accepted by the human and recorded via `review-loop`); diff limited to authorized
+  parity repairs; authorization, acceptance, verification, runtime, and current-session evidence
+  are complete; no unresolved blocking evidence gap.
+- **Standards**: code quality, binding preservation, asset usage, and interaction/state behavior
+  meet the bar; all blocking findings are fixed or explicitly human-accepted.
+
+Per-axis verdict: `pass | revise | blocked`. Overall = weakest axis. One axis must not mask
+the other.
 
 ## Output status
 

@@ -41,13 +41,38 @@ Affected Golden cases:
 Requirements-chain instructions:
 ```
 
+## Blocking conditions
+
+- The approved artifact is missing, not approved, ambiguous, or changed during review →
+  `blocked`. Do not update the artifact with review findings.
+- An implemented or changed state does not exist in the approved state chain.
+- A forbidden state is introduced in code, UI, fallback, tests, or review output.
+- An approved state has no implementation path and no explicitly approved non-code reason.
+- An affected Golden case lacks evidence for a `covered` disposition.
+- Reviewer timeout, missing run id, or non-`pass` verdict without explicit human risk acceptance
+  recorded via `review-loop`.
+
 ## Pass conditions
 
-- no unapproved state, fallback, or UI action remains;
-- no forbidden state is present;
-- every affected Golden case has acceptable evidence;
-- all blocking findings are fixed or explicitly human-accepted;
-- the artifact remained unchanged during the review.
+Report findings along the **Spec / Standards dual-axis** (see parent skill Step 1a):
 
-An MCP response or successful build alone cannot produce `pass`. Return `pass`, `revise`, or
-`blocked` and preserve deterministic checks separately from 审查角色 findings.
+- **Spec**: no unapproved state, fallback, or UI action remains; no forbidden state is present;
+  every affected Golden case has acceptable evidence; the artifact remained unchanged during the
+  review.
+- **Standards**: all blocking findings (correctness, security, maintainability, test coverage)
+  are fixed or explicitly human-accepted; code quality meets the bar.
+
+Per-axis verdict: `pass | revise | blocked`. Overall = weakest axis. One axis must not mask
+the other.
+
+## Output status
+
+Return through the parent `code-review-workflow` + `review-loop`:
+
+```text
+pass | revise | blocked
+```
+
+An MCP response or successful build alone cannot produce `pass`; the dual-axis verdict must be
+independently justified and deterministic checks preserved separately from 审查角色 findings.
+Use `review-loop` for finding decisions, validation reruns, and the three-round stop gate.

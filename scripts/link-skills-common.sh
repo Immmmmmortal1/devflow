@@ -96,6 +96,15 @@ link_skills_tree() {
   link_file "$source_root/skills/code-review-workflow/references/review-packet-template.md" \
     "$skills_root/code-review-workflow/references/review-packet-template.md"
 
+  link_file "$source_root/skills/bug-workflow/references/bug-repro-template.md" \
+    "$skills_root/bug-workflow/references/bug-repro-template.md"
+
+  link_file "$source_root/skills/confirm-gate/references/facts-decisions-frontier.md" \
+    "$skills_root/confirm-gate/references/facts-decisions-frontier.md"
+
+  link_file "$source_root/skills/feature-workflow/references/task-graph-template.md" \
+    "$skills_root/feature-workflow/references/task-graph-template.md"
+
   for route in \
     index.md \
     review-loop.md \

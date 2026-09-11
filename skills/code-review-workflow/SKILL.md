@@ -71,6 +71,36 @@ Acceptance criteria:
 The route may require an approved artifact, API mapping, Figma binding table, runtime evidence,
 or another concrete input. Missing required evidence is `review-blocked` before adapter invocation.
 
+### 1a. Spec / Standards dual-axis (mandatory)
+
+Every review output is structured along two axes. Neither axis may be omitted, and one axis
+must not mask the other.
+
+| Axis | Checks | Sources of truth |
+|------|--------|------------------|
+| **Spec** | Does the change meet the user request, confirmed scope, requirements artifact, API contract, or UI parity contract? | user request, confirmed scope, `.dev-flow/requirements/` artifact, API contract, Figma bindings |
+| **Standards** | Is the code correct, secure, maintainable, well-tested, and free of regressions? | code quality, security, error handling, test coverage, maintainability |
+
+Overall result derivation (applied **after** both axes produce their independent verdict):
+
+```text
+Spec=pass     + Standards=pass     → overall pass
+Spec=revise   + Standards=pass      → overall revise
+Spec=pass     + Standards=revise   → overall revise
+Spec=blocked  + Standards=pass      → overall blocked
+Spec=pass     + Standards=blocked  → overall blocked
+Spec=revise   + Standards=revise   → overall revise
+Spec=blocked  + Standards=blocked  → overall blocked
+```
+
+In short: **any `blocked` → overall `blocked`; any `revise` → overall `revise`; only
+both `pass` → overall `pass`**.
+
+The machine fields (`reviewer_result`, `selected_adapter`, `config_digest`, `ticket_token`,
+`ticket_digest`, `result_artifact`, `adapter_result_ref`, `adapter_result_digest`, `run_id`,
+`diff_evidence`) and the unified status `pass|revise|blocked` are unchanged. The dual-axis is a
+reporting and judgment contract — it does not change the session schema.
+
 ### 2. Build the shared packet
 
 Use [review-packet-template.md](references/review-packet-template.md). The packet must include:
@@ -243,10 +273,15 @@ Run id: <id or unavailable>
 Reviewer result: available | unknown | failed
 Raw findings: <normalized list or none>
 Transport blocker: <none or exact reason>
+Spec verdict: pass | revise | blocked
+Standards verdict: pass | revise | blocked
+Overall result: pass | revise | blocked
 ```
 
 The base must not return route-specific `review-passed` merely because MCP responded. The selected
-route evaluates the findings against its own criteria and returns the final route status.
+route evaluates the findings against its own criteria and returns the final route status. The
+dual-axis verdicts are reported independently so that one axis cannot mask the other; the overall
+result follows the derivation rule in Step 1a.
 
 When invoked inside a dev-flow session, record the selected route's final result with
 `bash scripts/dev-flow-session.sh record-gate --name review --report <path>`. A reviewer response
@@ -266,3 +301,6 @@ that is not recorded in the current session does not satisfy the commit gate.
   `pass`; the review path is fixed at dispatch time. Post-dispatch fallback switching is
   prohibited — a report with `review_path: "fallback"` is rejected when the locked adapter is
   not `skill/gstack`.
+- **Single-axis masking:** the Spec and Standards axes are reported independently. A `pass` on
+  one axis must not mask a `revise` or `blocked` on the other. The overall result is the
+  weakest axis (blocked > revise > pass).

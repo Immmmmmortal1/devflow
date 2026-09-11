@@ -34,6 +34,15 @@ Pass conditions:
 Output status:
 ```
 
+Every route must also report its findings along the **Spec / Standards dual-axis** (see the
+parent skill's Step 1a):
+
+- **Spec**: does the change meet the user request, confirmed scope, requirements/API/UI contract?
+- **Standards**: is the code correct, secure, maintainable, and tested?
+
+Each route returns a per-axis verdict (`pass | revise | blocked`). The overall result is the
+weakest axis (`blocked > revise > pass`). One axis must not mask the other.
+
 The route may call the parent base capability only through this contract. It must not duplicate
 adapter health checks or invent a second fallback protocol. Post-dispatch fallback switching is
 prohibited; fallback is selected only pre-dispatch by the resolver.

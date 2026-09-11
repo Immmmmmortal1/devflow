@@ -58,6 +58,9 @@ Commit module / bug scope:
 Generated commit message:
 Changes vs confirmed plan:
 Validation run:
+Bug repro re-run: (bug — required; feature — n/a)
+  - minimal repro: pass | fail
+  - full scenario: pass | fail
 Excluded worktree changes:
 Same-branch worktrees: none | main=<path> [<branch>]; children=<path> [<branch>], ...
 Worktree sync plan: n/a | commit child → ff/merge family main → sync siblings
@@ -71,11 +74,24 @@ Ready to commit: ask user
 Required when dev-flow type was **feature**. Must include:
 
 - modules/areas searched
-- at least one concrete outcome: similar case id/title, pitfall noted, or explicit “searched, no similar cases” with query/scope
+- at least one concrete outcome: similar case id/title, pitfall noted, or explicit "searched, no similar cases" with query/scope
 
 Placeholders (`n/a`, `skipped`, `待查`, `TBD`) → **hard stop**; run bugkb first.
 
 For **bug** path: use `n/a (pre-implementation bugkb already in confirm-gate)` unless you re-ran bugkb after code changes.
+
+### `Bug repro re-run` (bug path)
+
+Required when dev-flow type was **bug**. After the fix, the agent must re-run
+**both** the minimal repro and the full scenario established in
+`bug-workflow` Step 5 (see [bug-workflow references/bug-repro-template.md](../bug-workflow/references/bug-repro-template.md)).
+
+- `minimal repro`: must pass (green) — the symptom is gone.
+- `full scenario`: must pass (green) — no regression in the broader workflow.
+
+If either fails → **hard stop**; do not commit. Record the failing evidence.
+
+For **feature** path: use `n/a`.
 
 ## Hard rules
 
@@ -96,14 +112,15 @@ For **bug** path: use `n/a (pre-implementation bugkb already in confirm-gate)` u
     `pass`, review `pass`, runtime `runtime-verified`, and ui_parity `accepted` with matching
     authorization/acceptance reports respectively.
 12. **Feature:** never reach step 8 without **`Post-implementation bugkb`** filled — same bar as confirm-gate `bugkb findings` (concrete, not placeholder).
-13. Before every commit, detect same-branch sibling worktrees. If any exist, commit the child
+13. **Bug:** never reach step 8 without **`Bug repro re-run`** filled — both minimal repro and full scenario must pass green after the fix.
+14. Before every commit, detect same-branch sibling worktrees. If any exist, commit the child
     first, merge only into that family's main worktree, then sync siblings. Never merge a
     `{family}_N` commit into `master`, `main`, `appstore/*`, or any other family.
-14. The primary clone path is not automatically the family main. Example: work in
+15. The primary clone path is not automatically the family main. Example: work in
     `1.2.0_dev_2` merges to `1.2.0_dev`, never to `master`.
-15. Sibling sync is fast-forward only. Preserve each sibling's unrelated local WIP (stash → ff →
+16. Sibling sync is fast-forward only. Preserve each sibling's unrelated local WIP (stash → ff →
     stash pop). Never `reset --hard` sibling WIP. If `{family}` cannot fast-forward, stop and ask.
-16. Do not proactively close, exit, restart, or release the active MCP/DebugBridge connection.
+17. Do not proactively close, exit, restart, or release the active MCP/DebugBridge connection.
     Cleanup requires an explicit user request.
 
 ## Same-branch worktree family
