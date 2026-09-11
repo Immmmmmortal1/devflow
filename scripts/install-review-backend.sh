@@ -180,7 +180,7 @@ dev-flow Review 配置向导 — 步骤 2/6：选择首选 Review adapter
 PROMPT
   local choice=""
   while true; do
-    read -r -p "请选择 [1/2/3]（默认 $default_choice）: " choice
+    read -r -p "请选择 [1/2/3]（默认 ${default_choice}）: " choice
     choice="${choice:-$default_choice}"
     case "$choice" in
       1) REVIEW_BACKEND="$ADAPTER_AGENT"; break ;;
