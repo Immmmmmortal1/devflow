@@ -17,7 +17,7 @@ New Figma UI is a conditional sub-route of `feature`, not an independent entry. 
 completion contract is:
 
 ```text
-approved requirements → confirmed plan → implementation/review → runtime evidence
+approved requirements → confirmed plan → implement → runtime evidence
 → code review → route result → bugkb/ZenTao/UI result → commit approval → commit
 ```
 
@@ -161,7 +161,7 @@ bash scripts/install-dev-flow.sh --project <ios-app-root>
 | Stateful behavior | `requirements-closure` | closed state chain and requirements artifact |
 | Localized copy | `localization-workflow` | locale matrix, translations, exceptions, validation |
 | API-driven behavior | `api-contract` | field → business state → UI mapping |
-| New Figma UI in `feature` | `figma-ui-gates` | Figma decomposition and G0–G12 implementation gates |
+| New Figma UI in `feature` | `figma-ui-gates` | Rules/scripts/tests are self-contained; runtime depends on Figma REST, DebugBridge, XcodeBuildMCP, and the project's `build` configuration; configurable reviewers; runtime geometry evidence; simulator or device (default simulator) |
 | Existing UI parity | `ui-review` | Whole-page G2-equivalent split hard gate (`--stage split`) → all-unit live compare → baseline → human-authorized repair → live re-verify → acceptance |
 | After `ui_review` source repairs | `code-review-workflow` → `ui-parity-review` | post-fix 审查角色 review on authorized diffs only |
 | Real-device validation | `runtime-debug-workflow` | XcodeBuildMCP, DebugBridge, logs, runtime evidence |
@@ -235,7 +235,8 @@ After each gate completes, record its bounded result in the same session:
 bash scripts/dev-flow-session.sh record-gate --name figma_ui|review|runtime --report <path>
 ```
 
-`figma_ui` is accepted only when G0 through G12 are all `pass`; `review` is accepted only when its
+`figma_ui` is accepted only when every gate in the `figma-ui-gates` sequence passes, including
+`preflight` and `G6V`; `review` is accepted only when its
 route result is `pass`; `runtime` is accepted only as `runtime-verified`.
 
 ### 1. Classify the route
@@ -371,7 +372,16 @@ not use a route-specific fallback to bypass this gate, except the built-in
 ### 6. Implement or review
 
 - `feature`: implement only the approved plan. If it includes new Figma UI, read
-  `figma-ui-gates` now and complete its G0–G12 contract.
+  `figma-ui-gates` now and complete its gate sequence in order:
+  `preflight → G0 → G1 → G2 → G3 → G4 → G5 → G6 → G7 → G8 → G6V → G7A → G7B → G9 → G10 → G11 → G12`.
+  `FIGMA_UI_GATES_DIR` means the `figma-ui-gates` skill root directory, defaults to
+  `<devskills>/figma-ui-gates`, and may be overridden by the environment variable of the same name.
+  Inside `figma-ui-gates` documentation, `${SKILL_DIR}` is equivalent to
+  `${FIGMA_UI_GATES_DIR}`. Resolve its own rules and scripts from `${FIGMA_UI_GATES_DIR}`: node gates use the configured
+  reviewer (default `self`), G11 uses the configured final reviewer (default `subagent`), runtime
+  is `simulator | device` (default simulator), and G10 is geometry parity with no screenshot evidence.
+  Its rules, scripts, and tests are self-contained; runtime execution depends on Figma REST,
+  DebugBridge, XcodeBuildMCP, and the target project's resolved `build` configuration.
 - `bug`: implement only the approved repair plan.
 - `ui_review`: read `ui-review` and execute its pipeline in this order: Step1 whole-page
   **G2-equivalent hard gate** (recursive detail + real 审查角色 evidence; pass
@@ -418,8 +428,11 @@ continue. Timeout, missing result, or `blocked` is not a pass.
 
 - Feature → run `bugkb` and record the post-implementation regression check.
 - Bug → resolve through `zentao-bug-gate` when required.
-- Feature with new Figma UI → record the `figma-ui-gates` G0–G12 result and run
-  `validate-g6-asset-binding.sh` before `record-gate --name figma_ui`.
+- Feature with new Figma UI → record every gate in the `figma-ui-gates` sequence as pass,
+  including `preflight` and `G6V`, before `record-gate --name figma_ui`. G6 is design-side asset
+  declaration only; G6V runs after G8 and performs source-literal plus runtime-binding validation.
+  Use `${FIGMA_UI_GATES_DIR}/scripts/validate-g6-asset-binding.sh`; do not use or maintain a
+  devflow-local validator copy.
 - `ui_review` → when repairs ran, post-fix `ui-parity-review` must pass first; then record `review`,
   mandatory `runtime=runtime-verified`, and `ui_parity=accepted`. The parity report must bind
   `parity-confirmed.json` to `repair-accepted.json` and prove every authorized id accepted or
@@ -498,10 +511,15 @@ dev-flow v1 不侵入项目版本结构。
     status. Trivial fast-path (`required_gates=[]`) instead requires `validate-trivial` to pass
     and the scope digest to match at `approve-commit` and `commit` (no independent review gate);
     out-of-scope staged changes freeze the session as `requires-standard`/`requires-heavy`.
-11. `figma_ui` requires G0-G12 all pass and `g6_validation=pass` with a bounded
-    `g6_validation_report`; `review` requires `pass`; `runtime` requires `runtime-verified`; and
+11. `figma_ui` requires every gate in the `figma-ui-gates` sequence to pass, including `preflight`
+    and `G6V`, plus `g6v_validation=pass` with a bounded `g6v_validation_report`; `review` requires
+    `pass`; `runtime` requires `runtime-verified`; and
     configured `ui_parity` requires `accepted` with matching authorization and acceptance reports.
     Failed, blocked, unknown, or missing results cannot be converted to pass.
+11a. For `figma_ui`, G10 means runtime Geometry Parity only: compare numeric design/runtime
+     geometry with configured tolerances. Screenshot, pixel-similarity, and pixel-sampling evidence
+     cannot satisfy G10. Reviewer and runtime target selection come from the figma-ui-gates config;
+     defaults are node review=`self`, final review=`subagent`, runtime target=`simulator`.
 12. The selected review route and `commit-gate` must still approve the exact scope after the
     mechanical gate passes.
 13. Mixed features, unrelated fixes, and formatting-only changes must be split into separate commits.

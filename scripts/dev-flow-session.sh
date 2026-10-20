@@ -1378,35 +1378,34 @@ if gate_name == "ui_parity" and status == "accepted":
 
 if gate_name == "figma_ui" and status == "pass":
     gates = report.get("gates")
-    expected = [f"G{i}" for i in range(13)]
+    expected = ["preflight", "G0", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "G8", "G6V", "G7A", "G7B", "G9", "G10", "G11", "G12"]
     if not isinstance(gates, dict) or any(gates.get(name) != "pass" for name in expected):
-        raise SystemExit("figma_ui=pass requires G0 through G12 all to be pass.")
+        raise SystemExit("figma_ui=pass requires the full figma-ui-gates sequence to pass, including preflight and G6V.")
     artifact_workspace = report.get("artifact_workspace")
     if not isinstance(artifact_workspace, str) or not artifact_workspace.strip():
         raise SystemExit("figma_ui=pass requires artifact_workspace.")
     source_root = report.get("source_root")
     if not isinstance(source_root, str) or not source_root.strip():
         raise SystemExit("figma_ui=pass requires source_root.")
-    g6_validation = report.get("g6_validation")
-    if g6_validation != "pass":
-        raise SystemExit("figma_ui=pass requires g6_validation=pass.")
-    g6_report = report.get("g6_validation_report")
-    if not isinstance(g6_report, str) or not g6_report.strip():
-        raise SystemExit("figma_ui=pass requires g6_validation_report path.")
-    # g6 报告路径必须位于 artifact workspace 内，防止引用外部伪造报告
-    g6_report_path = Path(g6_report).expanduser().resolve()
+    g6v_validation = report.get("g6v_validation")
+    if g6v_validation != "pass":
+        raise SystemExit("figma_ui=pass requires g6v_validation=pass.")
+    g6v_report = report.get("g6v_validation_report")
+    if not isinstance(g6v_report, str) or not g6v_report.strip():
+        raise SystemExit("figma_ui=pass requires g6v_validation_report path.")
+    g6v_report_path = Path(g6v_report).expanduser().resolve()
     try:
-        g6_report_path.relative_to(Path(artifact_workspace).expanduser().resolve())
+        g6v_report_path.relative_to(Path(artifact_workspace).expanduser().resolve())
     except ValueError:
-        raise SystemExit("g6_validation_report must be inside artifact_workspace.")
-    if not g6_report_path.is_file():
-        raise SystemExit("figma_ui=pass requires an existing g6_validation_report file.")
+        raise SystemExit("g6v_validation_report must be inside artifact_workspace.")
+    if not g6v_report_path.is_file():
+        raise SystemExit("figma_ui=pass requires an existing g6v_validation_report file.")
     try:
-        g6_payload = json.loads(g6_report_path.read_text())
+        g6v_payload = json.loads(g6v_report_path.read_text())
     except json.JSONDecodeError as exc:
-        raise SystemExit(f"Invalid g6_validation_report JSON: {exc}") from exc
-    if g6_payload.get("status") != "pass":
-        raise SystemExit("figma_ui=pass requires g6_validation_report status=pass.")
+        raise SystemExit(f"Invalid g6v_validation_report JSON: {exc}") from exc
+    if g6v_payload.get("status") != "pass":
+        raise SystemExit("figma_ui=pass requires g6v_validation_report status=pass.")
 
 evidence = report.get("evidence")
 if not isinstance(evidence, str) or not evidence.strip():

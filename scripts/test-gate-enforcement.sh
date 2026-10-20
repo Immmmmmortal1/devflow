@@ -118,7 +118,8 @@ if name == "review":
     report["result_artifact"] = os.environ.get("GATE_RESULT_PATH", "")
     report["result_artifact_digest"] = os.environ.get("GATE_RESULT_DIGEST", "")
 if name == "figma_ui":
-    report["gates"] = {f"G{i}": "pass" for i in range(13)}
+    sequence = ["preflight", "G0", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "G8", "G6V", "G7A", "G7B", "G9", "G10", "G11", "G12"]
+    report["gates"] = {gate: "pass" for gate in sequence}
     fixture = tmp_root / "g6-fixture"
     source = fixture / "source"
     gates = fixture / "gates"
@@ -182,8 +183,8 @@ if name == "figma_ui":
     )
     report["artifact_workspace"] = str(fixture)
     report["source_root"] = str(source)
-    report["g6_validation"] = "pass"
-    report["g6_validation_report"] = str(g6_report)
+    report["g6v_validation"] = "pass"
+    report["g6v_validation_report"] = str(g6_report)
 Path(sys.argv[1]).write_text(json.dumps(report) + "\n")
 PY
 }
@@ -206,7 +207,7 @@ then
   exit 1
 fi
 if run_for record-gate --name figma_ui --report "$TMP_ROOT/.dev-flow/sessions/figma_ui.json" >/dev/null 2>&1; then
-  echo "FAIL: incomplete G0-G12 result reached the session" >&2
+  echo "FAIL: incomplete figma-ui-gates sequence reached the session" >&2
   exit 1
 fi
 
@@ -216,12 +217,11 @@ import json
 import sys
 from pathlib import Path
 report = json.loads(Path(sys.argv[1]).read_text())
-for key in ("g6_validation", "g6_validation_report", "artifact_workspace", "source_root"):
-    report.pop(key, None)
+report["gates"].pop("G6V", None)
 Path(sys.argv[2]).write_text(json.dumps(report) + "\n")
 PY
 if run_for record-gate --name figma_ui --report "$TMP_ROOT/.dev-flow/sessions/figma_ui-missing-g6.json" >/dev/null 2>&1; then
-  echo "FAIL: figma_ui pass without g6_validation should be rejected" >&2
+  echo "FAIL: figma_ui pass without G6V should be rejected" >&2
   exit 1
 fi
 
@@ -285,4 +285,4 @@ DEV_FLOW_PROJECT_ROOT="$TMP_ROOT" DEV_FLOW_SESSION_ID=req-blocked \
   DEV_FLOW_FIGMA_REST_HEALTH_CMD=/usr/bin/true \
   /bin/bash "$ROOT/scripts/environment-health-check.sh" run >/dev/null
 
-echo "PASS: G0-G12, review, and runtime gates block commit approval until resolved"
+echo "PASS: full figma-ui-gates sequence, review, and runtime gates block commit approval until resolved"

@@ -88,7 +88,7 @@ bash /path/to/devflow/scripts/dev-flow.sh environment-health run
 
 | 路由 | 用途 | 关键 skill |
 |---|---|---|
-| `feature` | 新能力；含新 Figma UI 时走 G0–G12 | `feature-workflow` + 条件 `figma-ui-gates` |
+| `feature` | 新能力；含新 Figma UI 时走完整 gate 序列（含 preflight 与 G6V） | `feature-workflow` + 条件 `figma-ui-gates` |
 | `bug` | 缺陷修复 | `bug-workflow` |
 | `ui_review` | **已有页面**与 Figma 的整页 parity 校对与授权修复 | `ui-review` |
 
@@ -105,7 +105,8 @@ bash /path/to/devflow/scripts/dev-flow.sh environment-health run
 顺序（机械门防缺字段/漂移/重放，不替代人工确认）：
 
 ```text
-preflight → G0…G12（含 G6 资产边界与机械绑定校验）
+preflight → G0 → G1 → G2 → G3 → G4 → G5 → G6 → G7 → G8
+→ G6V → G7A → G7B → G9 → G10 → G11 → G12
 ```
 
 产物工作区（目标工程内，应被目标仓 ignore）：
@@ -121,21 +122,22 @@ preflight → G0…G12（含 G6 资产边界与机械绑定校验）
 └── …
 ```
 
-### G6 资产绑定机械校验
+### G6V 资产绑定机械校验
 
-在 G6 之后、宣称绑定完成前执行：
+G6 只做设计侧资产声明；G6V 在 G8 构建启动后执行源码字面量与运行时绑定校验：
 
 ```bash
-bash scripts/validate-g6-asset-binding.sh \
+bash "${FIGMA_UI_GATES_DIR}/scripts/validate-g6-asset-binding.sh" \
   --workspace <artifact-workspace> \
   --source-root <target-project-root> \
   [--report <path>]
 ```
 
-自测：
+校验规则、脚本与测试只在 `figma-ui-gates` 目录维护；运行时仍依赖 Figma REST、
+DebugBridge、XcodeBuildMCP 与项目 `build` 配置。devflow 不保留副本。自测在该目录执行：
 
 ```bash
-bash scripts/test-validate-g6-asset-binding.sh
+bash tests/run-tests.sh
 ```
 
 ## UI Review（已有页 parity）
@@ -168,7 +170,8 @@ bash scripts/validate-ui-review-artifacts.sh \
 `--stage split` 会拒绝：
 
 - 硬编码 / 非 detail 汇总的 `minimum-unit-index`
-- 缺少真实审查角色 `run_id` + `verdict` 的 structure/detail review
+- 缺少 `reviewer{kind,id,model?}`、`verdict`、`findings` 或 `at` 的 structure/detail review；
+  `runId` 仅在 subagent 有 run id 时要求
 - 含可本地化文案却被 collapse 成 `image` 的 unit
 
 自测：
@@ -326,7 +329,6 @@ devflow/
 │   ├── review-health-probe.sh      # 适配器选择 + fallback 探针
 │   ├── environment-health-check.sh # 能力模型 + 独立探针
 │   ├── install-review-backend.sh   # 交互式 Review 后端向导
-│   ├── validate-g6-asset-binding.*
 │   ├── validate-ui-review-artifacts.*
 │   ├── fixtures/            # 校验器夹具
 │   └── test-*.sh
@@ -358,7 +360,7 @@ devskills/
 bash scripts/test-gate-enforcement.sh
 bash scripts/test-dev-flow-session-isolation.sh
 bash scripts/test-rules-gate.sh
-bash scripts/test-validate-g6-asset-binding.sh
+(cd "${FIGMA_UI_GATES_DIR}" && bash tests/run-tests.sh)
 bash scripts/test-validate-ui-review-artifacts.sh
 bash scripts/test-ui-parity-gate.sh
 ```

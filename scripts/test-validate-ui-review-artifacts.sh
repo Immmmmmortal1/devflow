@@ -38,10 +38,11 @@ write(root / "structure" / "screen-classification.json", {
 write(root / "structure" / "structure-review.json", {
     **base,
     "status": "pass",
-    "run_id": "structure-run-1",
     "role": "structure",
+    "reviewer": {"kind": "self", "id": "validator-fixture"},
     "verdict": "pass",
-    "reviewed_at": "2026-08-13T00:00:00Z",
+    "findings": [],
+    "at": "2026-08-13T00:00:00Z",
     "summary": "structure review pass",
 })
 write(root / "structure" / "minimum-unit-index.json", {
@@ -78,10 +79,11 @@ write(root / "groups" / "g1" / "detail-review.json", {
     **base,
     "group_id": "g1",
     "status": "pass",
-    "run_id": "detail-run-g1",
     "role": "detail",
+    "reviewer": {"kind": "self", "id": "validator-fixture"},
     "verdict": "pass",
-    "reviewed_at": "2026-08-13T00:00:01Z",
+    "findings": [],
+    "at": "2026-08-13T00:00:01Z",
     "summary": "detail review pass",
 })
 write(root / "groups" / "g2" / "detail.json", {
@@ -106,10 +108,11 @@ write(root / "groups" / "g2" / "detail-review.json", {
     **base,
     "group_id": "g2",
     "status": "pass",
-    "run_id": "detail-run-g2",
     "role": "detail",
+    "reviewer": {"kind": "self", "id": "validator-fixture"},
     "verdict": "pass",
-    "reviewed_at": "2026-08-13T00:00:02Z",
+    "findings": [],
+    "at": "2026-08-13T00:00:02Z",
     "summary": "detail review pass",
 })
 
@@ -238,17 +241,17 @@ expect_fail() {
 /bin/cp "$WORKSPACE/groups/g2/detail.json" "$TMP_ROOT/detail-g2.valid.json"
 /bin/cp "$WORKSPACE/structure/structure-review.json" "$TMP_ROOT/structure-review.valid.json"
 
-# Stamped detail-review without 审查角色 run_id cannot pass split.
+# A self-review does not require runId, but reviewer identity is mandatory.
 /usr/bin/python3 - "$WORKSPACE/groups/g1/detail-review.json" <<'PY'
 import json, sys
 from pathlib import Path
 path = Path(sys.argv[1])
 payload = json.loads(path.read_text())
-payload.pop("run_id", None)
+payload["reviewer"].pop("id", None)
 payload["status"] = "pass"
 path.write_text(json.dumps(payload) + "\n")
 PY
-expect_fail "detail-review missing run_id" split
+expect_fail "detail-review missing reviewer id" split
 /bin/cp "$TMP_ROOT/detail-review-g1.valid.json" "$WORKSPACE/groups/g1/detail-review.json"
 
 # Localizable-text composite collapsed as image minimum unit must fail.
@@ -291,16 +294,16 @@ PY
 expect_fail "figma dump TEXT descendants under collapsed image" split
 /bin/rm -rf -- "$WORKSPACE/figma"
 
-# Structure review without MCP evidence fails split.
+# A supplied runId must be non-empty.
 /usr/bin/python3 - "$WORKSPACE/structure/structure-review.json" <<'PY'
 import json, sys
 from pathlib import Path
 path = Path(sys.argv[1])
 payload = json.loads(path.read_text())
-payload.pop("run_id", None)
+payload["runId"] = ""
 path.write_text(json.dumps(payload) + "\n")
 PY
-expect_fail "structure-review missing run_id" split
+expect_fail "structure-review empty runId" split
 /bin/cp "$TMP_ROOT/structure-review.valid.json" "$WORKSPACE/structure/structure-review.json"
 
 # Missing baseline coverage.

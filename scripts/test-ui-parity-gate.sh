@@ -105,8 +105,9 @@ write(root / "structure" / "structure-sweep-complete.json", {
     **base, "status": "pass", "minimum_unit_count": 1,
 })
 write(root / "structure" / "structure-review.json", {
-    **base, "status": "pass", "run_id": "structure-run-1",
-    "role": "structure", "verdict": "pass", "reviewed_at": "2026-08-13T00:00:00Z",
+    **base, "status": "pass", "role": "structure",
+    "reviewer": {"kind": "self", "id": "parity-fixture"},
+    "verdict": "pass", "findings": [], "at": "2026-08-13T00:00:00Z",
     "summary": "structure review pass",
 })
 write(root / "groups" / "2985_1" / "detail.json", {
@@ -119,8 +120,9 @@ write(root / "groups" / "2985_1" / "detail.json", {
     }],
 })
 write(root / "groups" / "2985_1" / "detail-review.json", {
-    **base, "group_id": "2985_1", "status": "pass", "run_id": "detail-run-2985-1",
-    "role": "detail", "verdict": "pass", "reviewed_at": "2026-08-13T00:00:00Z",
+    **base, "group_id": "2985_1", "status": "pass", "role": "detail",
+    "reviewer": {"kind": "self", "id": "parity-fixture"},
+    "verdict": "pass", "findings": [], "at": "2026-08-13T00:00:00Z",
     "summary": "detail review pass",
 })
 image_evidence = {

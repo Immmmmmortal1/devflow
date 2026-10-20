@@ -119,4 +119,4 @@ reruns, and the three-round stop gate.
 | `ui-review` | Whole-page split, all-unit compare, runtime-extra scan, baseline, authorization, repair, live verify, human acceptance |
 | This route | Post-edit 审查角色 packet + acceptance of authorized repair diffs |
 | `code-review-workflow` base | Adapter health, packet transport, pre-dispatch fallback selection, post-dispatch fail-closed, normalized handoff |
-| `figma-ui-gates` | New-screen G0–G12 implementation (not this route) |
+| `figma-ui-gates` | New-screen gate sequence including preflight and G6V (not this route) |

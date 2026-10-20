@@ -136,7 +136,7 @@ verify_ascending_in_section "$BUG_SKILL" "## Order" \
   "gstack-investigate" "gstack-investigate" \
   "Red-capable feedback loop" "Red-capable feedback loop" \
   "gstack-review" "gstack-review" \
-  "confirm-gate" "confirm-gate" \
+  "formal confirmation step" 'Read **`confirm-gate`** → stop for user confirmation' \
   "implement confirmed scope" "implement confirmed scope" \
   "re-run" "re-run" \
   "commit-gate" "commit-gate"

@@ -64,17 +64,34 @@ Run `scripts/validate-ui-review-artifacts.sh` at the end of Steps 1, 2, and 4 wi
 ## Compare rules (single source of truth)
 
 The minimum-unit implementation and acceptance rules have a **single source of truth** in the
-`figma-ui-gates` repository: `figma-ui-gates/rules/*.md`, split by `unit_kind`
-(`text`, `button-text`, `button-image`, `button-text-icon`, `image`) plus `rules/screen.md` for
+`figma-ui-gates` skill. Use `${FIGMA_UI_GATES_DIR}` with the definition owned by
+`devflow/SKILL.md`; its rules live at `${FIGMA_UI_GATES_DIR}/rules/*.md`, split by `unit_kind`
+(`text`, `button-text`, `button-image`, `button-text-icon`, `image`, `shared-component`) plus `${FIGMA_UI_GATES_DIR}/rules/screen.md` for
 screen-level checks. Each rule file is dual-purpose — implement to it, verify against it — and
 defines its own acceptance criteria, tolerance limits, and evidence-normalization shape (enforced
 mechanically by `validate-ui-review-artifacts.py`).
 
-**Step 1**, **Step 2**, and **Step 3** must reference `figma-ui-gates/rules/` for every
+**Step 1**, **Step 2**, and **Step 3** must reference `${FIGMA_UI_GATES_DIR}/rules/` for every
 `unit_kind` they touch. Do **not** restate, summarize, or fork these rules in this file — load the
-relevant `rules/*.md` on demand by `unit_kind` and apply it directly. When a page's
+relevant `${FIGMA_UI_GATES_DIR}/rules/*.md` on demand by `unit_kind` and apply it directly. When a page's
 `rules_used.json` is present, load only the rule files it names; a `unit_kind` not on the page is
 not loaded.
+
+`${FIGMA_UI_GATES_DIR}/rules/layout-anchor.md` is the exception to `unit_kind` gating: every node has a layout anchor,
+so it is always in scope. During Step 1, record each unit's `layout_anchor`
+(`left` / `right` / `center` / `fill` / `ambiguous`) with its measured margins and offset, judged
+against the unit's **direct parent box**. An `ambiguous` unit blocks Step 2 for that unit and must
+be put to the human for confirmation. During Step 2, a unit whose frame matches the design but
+whose edge relationship changes with container width is `wrong`, not `ok`.
+
+`layout-anchor.md` is always loaded. `shared-chrome.md` and `corner-radius.md` are conditional:
+load `shared-chrome.md` only when the page contains a shared-component/chrome unit, and load
+`corner-radius.md` only when the page contains a rounded unit:
+
+- **公共组件校验** — 全仓搜索 chrome 实现点，超过 1 份即 finding；页面内出现 chrome
+  资源名或构建代码即 finding；选中态不是由调用方参数传入即 finding。
+- **圆角校验** — `cornerRadius <= min(w,h)/2 + 0.5pt`；设计声明值超过半高/半宽时
+  必须呈胶囊形状，否则 finding。
 
 ---
 
@@ -115,18 +132,19 @@ Step 1 is a **hard gate**, not soft guidance. A stamped `detail-review.json`, a 
 4. Screen container classification (same intent as `figma-ui-gates` G4): from Figma structure decide
    whether the screen has list/repeated data, and record the **expected** `screen.base_layout`
    (`UICollectionView` vs adaptive `UIScrollView`) in `structure/screen-classification.json`.
-5. Structure 审查角色 (same intent as G1 Review), including the screen classification. Write
-   `structure/structure-review.json` with real 审查角色 evidence (`run_id`, `role=structure`,
-   `verdict=pass`). Non-pass stops.
+5. Run the configured node reviewer (default current-agent `self`), including the screen
+   classification. Write `structure/structure-review.json` with the reviewer evidence contract
+   below. Non-pass stops.
 6. Detail sweep (same as `figma-ui-gates` G2) — **recursive, structure order**:
    - process first-level Groups in Structure order
    - decide minimum unit / asset-collapse-eligible with the same G2 rules
    - **assign each minimum unit its `unit_kind`** using the Compare rules taxonomy
-     (`text` / `button-text` / `button-image` / `button-text-icon` / `image`) and record the full
+      (`text` / `button-text` / `button-image` / `button-text-icon` / `image` /
+      `shared-component`) and record the full
      G2 decision fields in `detail.json` (see schema below)
    - non-minimum units keep splitting children until split-complete
-   - each detail gets Detail 审查角色 **immediately**; write `detail-review.json` with real
-     审查角色 evidence (`run_id`, `role=detail`, `verdict=pass`); non-pass stops
+    - each detail gets the configured node reviewer **immediately**; write `detail-review.json` with
+      the reviewer evidence contract below; non-pass stops
    - **do not** bind runtime, compare parity, edit source, or write `parity-result.*` in this step
 7. Whole-page complete when every first-level Group is split-complete → write
    `structure/structure-sweep-complete.json` and `structure/minimum-unit-index.json`.
@@ -176,26 +194,32 @@ Hard consistency rules (enforced by validator):
 - When `figma/root.depth4.json` (or `figma/root.json`) exists, an `image` unit with
   `asset_collapse_eligible=true` that has TEXT descendants in the dump fails split
 
-### 审查角色 evidence schema
+### Reviewer evidence schema
 
 `structure/structure-review.json` and each `groups/<id>/detail-review.json` must include:
 
 ```text
 status: pass
-run_id: <non-empty orchestrator run id>
 role: structure | detail
+reviewer:
+  kind: self | subagent | custom
+  id: <non-empty reviewer identity>
+  model: <optional>
 verdict: pass
-reviewed_at: <ISO-8601 timestamp>
+findings: []
+at: <ISO-8601 timestamp>
+runId: <subagent run id, conditionally required>
 ```
 
-Optional when present on the handoff: `provider`, `model`. A file with only `status: pass` and no
-`run_id` is invalid.
+`runId` is required only when `reviewer.kind=subagent` and that agent has a run id. Self-review and
+custom-review records do not require it. A file with only `status: pass` and no reviewer identity,
+verdict, findings, or timestamp is invalid.
 
-### 审查角色 scope in Step 1
+### Reviewer scope in Step 1
 
-- **Structure 审查角色** — root identity, direct-child completeness, parent/child preservation,
+- **Structure reviewer** — root identity, direct-child completeness, parent/child preservation,
   visual order, original coordinates, and the **expected `screen.base_layout`** decision.
-- **Detail 审查角色** (per Group) — minimum-unit decision, asset-collapse eligibility, and the
+- **Detail reviewer** (per Group) — minimum-unit decision, asset-collapse eligibility, and the
   **`unit_kind` classification** (e.g. a text+icon button must not be labelled `image`; a
   localizable text node must not be `image`). A wrong `unit_kind` is a non-pass.
 
@@ -218,8 +242,8 @@ Optional when present on the handoff: `provider`, `model`. A file with only `sta
 ### Step 1 pass
 
 ```text
-Structure 审查角色 = pass (structure-review.json has run_id + verdict)
-Every Group Detail 审查角色 = pass (detail-review.json has run_id + verdict)
+Configured Structure reviewer = pass (structure-review.json satisfies the reviewer contract)
+Every Group configured Detail reviewer = pass (detail-review.json satisfies the reviewer contract)
 Every minimum unit has reviewed G2 decision fields + unit_kind
 minimum-unit-index.json exactly equals reviewed detail.minimum_units
 screen-classification.json (expected base_layout) written
@@ -241,10 +265,13 @@ find it on the **live rendered UI** and compare against the Figma standard.
 session/workspace. Do not begin DebugBridge lookups, and do not write `parity-result.*`, until
 that gate is green.
 
-Requires the chosen target (wired physical device or explicit Simulator) with the target App running
+The runtime target is configurable: it must allow a chosen target (wired physical device or explicit Simulator),
+with Simulator as the default; it must not require a physical device. Requires the configured target
+(`simulator | device`) with the target App running
 (guaranteed by Step 0 environment-health). Before the first live lookup, confirm DebugBridge is still reachable
 (`ensure_ports` + `ping`); if the App is not running, relaunch via XcodeBuildMCP, then continue.
-Screenshots are not comparison evidence; use DebugBridge hierarchy / runtime nodes only.
+Captured-screen evidence is not comparison evidence; use DebugBridge hierarchy/runtime nodes and
+numeric geometry only.
 
 ### Pace
 
@@ -349,7 +376,7 @@ Each unit row at least:
 ```text
 figma_id:
 name:
-unit_kind: text | button-text | button-image | button-text-icon | image
+unit_kind: text | button-text | button-image | button-text-icon | image | shared-component
 mark: ok | wrong | missing
 observation_status: observed
 runtime_binding: exact | inferred | —
@@ -396,7 +423,7 @@ missing: N
 2. Walk **all** minimum units from the split; do not sample.
 3. Image/button-image hash mismatch → mark `wrong`; Figma export is authoritative for later repair.
 4. Button with text + icon → expect `UIView` + gesture; wrong control model → `wrong`.
-5. No screenshot-based “looks the same” → `ok`.
+5. No captured-screen or pixel-similarity “looks the same” → `ok`; use numeric geometry evidence.
 6. Step 2 is incomplete until `parity-result.md` and `parity-result.json` exist and cover every
    minimum unit, screen background/base layout, and the reverse runtime-extra scan.
 7. `unobserved` or `blocked` is an evidence state, never silently converted to `missing` or `ok`.
@@ -534,9 +561,10 @@ groups/<node-id>/repair-plan.md
 
 #### E. How to verify (mandatory live loop)
 
-After **each** edit for this unit, the agent must **itself** re-check on the chosen target (wired
-physical device or explicit Simulator).
-Do not ask the human to “look at the screen” as a substitute. Do not use screenshots as evidence.
+After **each** edit for this unit, the agent must **itself** re-check on the configured target
+(`simulator | device`, default simulator).
+Do not ask the human to inspect the screen as a substitute. Use numeric geometry, hierarchy, and
+runtime-node evidence; captured-screen and pixel-similarity evidence are forbidden.
 Read and execute `runtime-debug-workflow` for the build/install/launch and DebugBridge lifecycle;
 this step supplies parity criteria while that skill supplies current-run runtime evidence.
 
@@ -635,8 +663,8 @@ result together show first-round vs post-repair for later debugging.
    if not ok continue edit; a blocked round stops the repair set for Step 4 disposition, and only
    `ok` may advance directly to the next id.
 5. Do not “fix” `ok` or `skip`/`defer` rows.
-6. Verification is **agent-driven** DebugBridge on the chosen target + the Compare rules block, not
-   screenshots and not “please check on your phone”.
+6. Verification is **agent-driven** DebugBridge on the configured target + the Compare rules block,
+   using numeric geometry rather than captured screens, pixel similarity, or human visual approval.
 7. Not fixed correctly (`wrong` / still `missing`) ⇒ keep modifying; never mark the unit done early.
 
 ### Step 3 pass
@@ -758,7 +786,7 @@ status: pass
 route: ui-parity-review
 source_edits: true
 reviewer_result: pass
-run_id:
+runId:
 diff_evidence:
 artifact_workspace:
 baseline_report:
@@ -816,5 +844,5 @@ handoff.
 |---|---|
 | `ui-review` | Step 1–6 (split, compare/extras, baseline, repair, live verify, acceptance, post-review, gates) |
 | `code-grounded` / `confirm-gate` | Scope/evidence discipline and first-edit confirmation |
-| `figma-ui-gates` | New-screen G0–G12; **split rule source** for Step 1 |
+| `figma-ui-gates` | New-screen gate sequence including preflight and G6V; **split rule source** for Step 1 |
 | `ui-parity-review` route | Post-fix 审查角色 on authorized diffs only |

@@ -17,11 +17,12 @@ UNIT_KINDS = {
     "button-image",
     "button-text-icon",
     "image",
+    "shared-component",
 }
 MARKS = {"ok", "wrong", "missing"}
 BASE_LAYOUTS = {"UICollectionView", "UIScrollView"}
 SPLIT_STATUSES = {"complete", "pending_children"}
-REVIEW_EVIDENCE_FIELDS = ("status", "run_id", "role", "verdict", "reviewed_at")
+REVIEW_EVIDENCE_FIELDS = ("status", "role", "reviewer", "verdict", "findings", "at")
 UNIT_DECISION_FIELDS = (
     "figma_id",
     "group_id",
@@ -110,11 +111,27 @@ def validate_review_evidence(payload: dict[str, Any], label: str, expected_role:
         raise ValidationError(f"{label} status must be pass")
     if payload.get("verdict") != "pass":
         raise ValidationError(f"{label} verdict must be pass")
-    require_nonempty_str(payload, "run_id", label)
     role = require_nonempty_str(payload, "role", label)
     if role != expected_role:
         raise ValidationError(f"{label} role must be {expected_role}")
-    require_nonempty_str(payload, "reviewed_at", label)
+    reviewer = payload.get("reviewer")
+    if not isinstance(reviewer, dict):
+        raise ValidationError(f"{label} reviewer must be an object")
+    kind = reviewer.get("kind")
+    if kind not in {"self", "subagent", "custom"}:
+        raise ValidationError(f"{label} reviewer.kind must be self|subagent|custom")
+    require_nonempty_str(reviewer, "id", f"{label} reviewer")
+    if "model" in reviewer and (
+        not isinstance(reviewer["model"], str) or not reviewer["model"].strip()
+    ):
+        raise ValidationError(f"{label} reviewer.model must be a non-empty string when present")
+    if "runId" in payload and (
+        not isinstance(payload["runId"], str) or not payload["runId"].strip()
+    ):
+        raise ValidationError(f"{label} runId must be a non-empty string when present")
+    if not isinstance(payload.get("findings"), list):
+        raise ValidationError(f"{label} findings must be an array")
+    require_nonempty_str(payload, "at", label)
 
 
 def validate_unit_decision(unit: dict[str, Any], label: str) -> dict[str, Any]:

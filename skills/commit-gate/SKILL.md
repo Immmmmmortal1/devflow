@@ -108,8 +108,9 @@ For **feature** path: use `n/a`.
     current dev-flow session (not `local` inside Cursor). Re-launch the App with
     `build_run_device({ env: { DEV_FLOW_SESSION_ID: "<session id>" } })` when identity is stale.
 11. When dev-flow marks `figma_ui`, `review`, `runtime`, or `ui_parity` as required, each must be
-    recorded in the current session before `approve-commit`; the required statuses are G0-G12 all
-    `pass`, review `pass`, runtime `runtime-verified`, and ui_parity `accepted` with matching
+    recorded in the current session before `approve-commit`; the required statuses are every gate
+    in the `figma-ui-gates` sequence `pass` (including `preflight` and `G6V`), review `pass`, runtime
+    `runtime-verified`, and ui_parity `accepted` with matching
     authorization/acceptance reports respectively.
 12. **Feature:** never reach step 8 without **`Post-implementation bugkb`** filled — same bar as confirm-gate `bugkb findings` (concrete, not placeholder).
 13. **Bug:** never reach step 8 without **`Bug repro re-run`** filled — both minimal repro and full scenario must pass green after the fix.

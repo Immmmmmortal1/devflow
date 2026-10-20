@@ -122,14 +122,14 @@ if ((${#skills_missing_files[@]} > 0)); then
 fi
 
 # 反向：每个 skills/*/SKILL.md 目录名必须是数组中的完整元素
-# 注意：figma-ui-gates/SKILL.md 是 symlink，需同时匹配 -type f 和 -type l
+# 注意：figma-ui-gates 可能是整个目录的 symlink，find 必须跟随目录 symlink。
 skills_not_in_array=()
 while IFS= read -r -d '' skill_file; do
   dir_name="$(basename "$(dirname "$skill_file")")"
   if ! extract_skills_array "$LINK_SH" | /usr/bin/grep -qxF "$dir_name"; then
     skills_not_in_array+=("$dir_name")
   fi
-done < <(find "$ROOT/skills" -maxdepth 2 -name "SKILL.md" \( -type f -o -type l \) -print0)
+done < <(find -L "$ROOT/skills" -maxdepth 2 -name "SKILL.md" -type f -print0)
 
 if ((${#skills_not_in_array[@]} > 0)); then
   echo "FAIL: skill directories not in skills array:" >&2
@@ -137,9 +137,9 @@ if ((${#skills_not_in_array[@]} > 0)); then
   exit 1
 fi
 
-# 验证数组元素数量与实际 SKILL.md 数量一致（含 symlink）
+# 验证数组元素数量与实际 SKILL.md 数量一致（含目录 symlink 下的文件）
 array_count="$(extract_skills_array "$LINK_SH" | /usr/bin/wc -l | /usr/bin/tr -d ' ')"
-file_count="$(find "$ROOT/skills" -maxdepth 2 -name "SKILL.md" \( -type f -o -type l \) | /usr/bin/wc -l | /usr/bin/tr -d ' ')"
+file_count="$(find -L "$ROOT/skills" -maxdepth 2 -name "SKILL.md" -type f | /usr/bin/wc -l | /usr/bin/tr -d ' ')"
 if [[ "$array_count" != "$file_count" ]]; then
   echo "FAIL: skills array count ($array_count) != actual SKILL.md count ($file_count)" >&2
   exit 1

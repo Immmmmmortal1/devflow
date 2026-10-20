@@ -52,8 +52,6 @@ link_project_scripts_tree() {
     dev-flow-doctor.sh
     xcode-target-resolver.sh
     xcode-target-resolver.py
-    validate-g6-asset-binding.sh
-    validate-g6-asset-binding.py
     validate-ui-review-artifacts.sh
     validate-ui-review-artifacts.py
   )
