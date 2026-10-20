@@ -120,7 +120,7 @@ def inject_pod(content: str, tag: str) -> tuple[str, bool]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("project_root", type=Path)
-    parser.add_argument("--tag", default="0.1.14")
+    parser.add_argument("--tag", default="0.1.18")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
